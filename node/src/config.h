@@ -4,7 +4,7 @@
 #include <Arduino.h>
 
 #define FW_MAJOR 0
-#define FW_MINOR 1
+#define FW_MINOR 2
 
 // Relay input, active high. GPIO14 (D5) has no boot-strap function and stays
 // low through reset. Fit a 10 k pull-down from this pin to GND so the relay
@@ -29,3 +29,4 @@ static const uint32_t PAIR_HOLD_MS = 3000;
 static const uint32_t PAIR_WINDOW_MS = 120000;    // pairing mode timeout if already paired
 static const uint32_t FAILSAFE_MARGIN_MS = 500;
 static const uint8_t WIFI_CHANNEL_MAX = 13;
+static const uint32_t OTA_JOIN_TIMEOUT_MS = 20000;

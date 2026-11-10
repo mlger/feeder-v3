@@ -101,9 +101,45 @@ mkdir -p build/shots && build/sim/feeder_sim build/shots
 To add a feeder, open **Feeders**, hold the feeder's FLASH button for 3 s and
 tap **Add** when it appears. The HMI then sends it the time and its schedule.
 
-The HMI clock comes from the board's RTC. Set it once in **Settings**; every
-feeder is kept within 5 s of it. Wi-Fi, NTP, OTA updates and SD-card logging
-are not implemented yet.
+### Network page
+
+| Card | What it does |
+| --- | --- |
+| Wi-Fi | Scan, pick a network, type the password. The network is remembered. |
+| Internet time | Set your UTC offset, then switch on. The clock then follows NTP (`pool.ntp.org`). |
+| Firmware updates | Unlocks uploads on the controller's web page for 10 minutes. |
+
+Without Wi-Fi the clock comes from the board's RTC: set it once in
+**Settings**. Either way every feeder is kept within 5 s of the controller.
+There is no automatic daylight-saving change; adjust the UTC offset by hand.
+
+Wi-Fi is optional. Feeders talk to the controller over ESP-NOW on whatever
+channel the controller is on, and find it again by themselves when joining a
+network moves it to another channel (this takes up to a minute).
+
+## Firmware updates
+
+Both devices can be updated without a cable once the controller is on Wi-Fi.
+
+1. On the controller open **Network** and switch on **Firmware updates**.
+2. In a browser on the same network open the address shown there.
+3. **Controller:** upload `hmi/.pio/build/hmi/firmware.bin`. It restarts into
+   the new version; if that version fails to start, the next reset returns to
+   the previous one.
+4. **Feeders:** upload `node/.pio/build/nodemcuv2/firmware.bin`, then press
+   **Update** next to each feeder.
+
+A feeder has no network connection of its own. For an update the controller
+opens a temporary access point with a random password, tells the feeder over
+ESP-NOW, and serves it the file. The feeder checks the file's MD5 before
+switching, and restarts on its old firmware if anything goes wrong. It is off
+the air for about a minute and skips any feed due in that time.
+
+The web page is plain HTTP on your local network and uploads only work while
+the switch on the controller is on.
+
+Not implemented yet: SD-card logging, a set-up access point for entering
+Wi-Fi details without the touchscreen, and the GitHub Pages site.
 
 ## Node wiring (NodeMCU V3)
 

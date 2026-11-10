@@ -10,6 +10,7 @@
 #include "esp_heap_caps.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -75,6 +76,11 @@ void app_main(void)
 
     lv_timer_handler(); /* draw the first frame before the light comes on */
     board_backlight(true);
+
+    /* After an update the bootloader runs the new firmware on trial. It got
+     * as far as drawing the UI, so keep it; otherwise the next reset goes
+     * back to the previous version. */
+    esp_ota_mark_app_valid_cancel_rollback();
 
     while (true) {
         uint32_t wait = lv_timer_handler();

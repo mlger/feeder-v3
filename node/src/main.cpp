@@ -11,6 +11,7 @@
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
+#include <ESP8266httpUpdate.h>
 #include <LittleFS.h>
 #include <RTClib.h>
 #include <Ticker.h>
@@ -389,6 +390,45 @@ static void enterPairing()
     Serial.println("[link] pairing mode");
 }
 
+// ------------------------------------------------------- firmware update
+
+static bool otaPending = false;
+static fd_msg_ota_start_t otaMsg;
+
+// Join the HMI's temporary access point, download the new firmware and
+// reboot into it. The node cannot feed while this runs, so the relay is
+// forced off first. Any failure ends in a plain restart on the old firmware.
+static void runOta()
+{
+    failsafe.detach();
+    fd_pulse_abort(&pulse);
+    relayWrite(false);
+    digitalWrite(PIN_LED, LOW);
+    Serial.printf("[ota] joining %s\n", otaMsg.ssid);
+
+    esp_now_deinit();
+    WiFi.begin(otaMsg.ssid, otaMsg.pass);
+    uint32_t start = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - start < OTA_JOIN_TIMEOUT_MS) {
+        delay(100);
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+        char url[48];
+        snprintf(url, sizeof(url), "http://%u.%u.%u.%u:%u/node.bin", otaMsg.ip[0], otaMsg.ip[1],
+                 otaMsg.ip[2], otaMsg.ip[3], otaMsg.port);
+        Serial.printf("[ota] fetching %s\n", url);
+        WiFiClient client;
+        ESPhttpUpdate.rebootOnUpdate(true);
+        // Checks the MD5 the HMI sends before switching to the new image.
+        t_httpUpdate_return r = ESPhttpUpdate.update(client, url);
+        Serial.printf("[ota] failed (%d): %s\n", r, ESPhttpUpdate.getLastErrorString().c_str());
+    } else {
+        Serial.println("[ota] could not join the access point");
+    }
+    delay(200);
+    ESP.restart();
+}
+
 static void handlePacket(const RxPacket &p)
 {
     uint8_t type = fd_proto_validate(p.data, p.len);
@@ -485,6 +525,15 @@ static void handlePacket(const RxPacket &p)
         sendAck(p.mac, hdr, lastFeedCode);
         break;
     }
+    case FD_MSG_OTA_START:
+        if (pulse.active) {
+            sendAck(p.mac, hdr, FD_RES_BUSY);
+        } else {
+            memcpy(&otaMsg, p.data, sizeof(otaMsg));
+            otaPending = true;
+            sendAck(p.mac, hdr, FD_RES_OK);
+        }
+        break;
     case FD_MSG_STATUS_REQ:
         sendStatus();
         lastStatusMs = millis();
@@ -640,6 +689,10 @@ void loop()
     feedLoop();
     scheduleLoop();
     linkLoop();
+    if (otaPending && !pulse.active) {
+        delay(50); // let the ACK leave before the radio changes mode
+        runOta();
+    }
     buttonLoop();
     ledLoop();
     yield();

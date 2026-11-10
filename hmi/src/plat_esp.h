@@ -10,3 +10,6 @@ esp_err_t plat_esp_init(void);
 
 /* Next received ESP-NOW frame, if any. `data` must hold 250 bytes. */
 bool plat_esp_receive(uint8_t mac[6], uint8_t *data, uint8_t *len);
+
+/* Called by the network code when NTP has set the system clock. */
+void plat_esp_time_synced(void);

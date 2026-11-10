@@ -25,12 +25,92 @@
 /* ------------------------------------------------------- virtual time */
 
 static uint32_t now_ms = 1000;
-static uint32_t epoch_base; /* local epoch at now_ms == 0; 0 = clock not set */
+static uint32_t utc_base;   /* UTC epoch at now_ms == 0; 0 = clock not set */
+static int32_t  utc_offset; /* seconds */
 
 uint32_t plat_millis(void) { return now_ms; }
-bool plat_time_valid(void) { return epoch_base != 0; }
-uint32_t plat_local_epoch(void) { return epoch_base ? epoch_base + now_ms / 1000 : now_ms / 1000; }
-void plat_set_local_epoch(uint32_t e) { epoch_base = e - now_ms / 1000; }
+bool plat_time_valid(void) { return utc_base != 0; }
+uint32_t plat_local_epoch(void)
+{
+    return utc_base ? (uint32_t)((int32_t)(utc_base + now_ms / 1000) + utc_offset) : now_ms / 1000;
+}
+void plat_set_local_epoch(uint32_t e) { utc_base = (uint32_t)((int32_t)e - utc_offset) - now_ms / 1000; }
+void plat_set_utc_offset(int16_t minutes) { utc_offset = minutes * 60; }
+
+/* ------------------------------------------------- fake Wi-Fi and NTP */
+
+/* "Real" UTC, as an NTP server would report it: Mon 2026-11-09 00:10:00
+ * at the moment the simulation starts. */
+#define TRUE_UTC_AT_START (1794182400u + 600u)
+
+static plat_wifi_state_t wifi_state = PLAT_WIFI_IDLE;
+static char wifi_ssid[33];
+static uint32_t wifi_since_ms, scan_since_ms;
+static bool ntp_on, ntp_synced, updates_allowed;
+static char last_status[800];
+
+plat_wifi_state_t plat_wifi_state(void) { return wifi_state; }
+void plat_wifi_info(char *ssid, size_t ssid_len, char *ip, size_t ip_len)
+{
+    snprintf(ssid, ssid_len, "%s", wifi_ssid);
+    snprintf(ip, ip_len, "%s", wifi_state == PLAT_WIFI_CONNECTED ? "192.168.1.50" : "");
+}
+void plat_wifi_connect(const char *ssid, const char *pass)
+{
+    snprintf(wifi_ssid, sizeof(wifi_ssid), "%s", ssid);
+    /* The fake router only knows one password. */
+    wifi_state = strcmp(pass, "fishfood") == 0 ? PLAT_WIFI_CONNECTING : PLAT_WIFI_FAILED;
+    wifi_since_ms = now_ms;
+}
+void plat_wifi_forget(void) { wifi_ssid[0] = '\0'; wifi_state = PLAT_WIFI_IDLE; }
+void plat_wifi_scan(void) { scan_since_ms = now_ms; }
+int plat_wifi_scan_get(plat_ap_t *out, int max)
+{
+    static const plat_ap_t found_aps[] = {
+        { "HomeNetwork", -48, true }, { "Neighbour-5G", -71, true }, { "CoffeeShop Guest", -80, false },
+    };
+    if (now_ms - scan_since_ms < 1500) {
+        return -1;
+    }
+    int n = max < 3 ? max : 3;
+    memcpy(out, found_aps, sizeof(plat_ap_t) * (size_t)n);
+    return n;
+}
+void plat_ntp_enable(bool on) { ntp_on = on; if (!on) ntp_synced = false; }
+bool plat_ntp_synced(void) { return ntp_synced; }
+void plat_updates_allow(bool on) { updates_allowed = on; }
+void plat_publish_status(const char *json) { snprintf(last_status, sizeof(last_status), "%s", json); }
+
+static void net_tick(void)
+{
+    if (wifi_state == PLAT_WIFI_CONNECTING && now_ms - wifi_since_ms > 2000) {
+        wifi_state = PLAT_WIFI_CONNECTED;
+        wifi_since_ms = now_ms;
+    }
+    if (ntp_on && !ntp_synced && wifi_state == PLAT_WIFI_CONNECTED && now_ms - wifi_since_ms > 1000) {
+        utc_base = TRUE_UTC_AT_START - 1;
+        ntp_synced = true;
+    }
+}
+
+/* Feeder firmware "uploaded on the web page" and the update access point. */
+static uint32_t node_fw_size;
+static int node_ota_request = -1;
+static bool ota_ap_open, ota_served;
+uint32_t plat_node_fw_size(void) { return node_fw_size; }
+int plat_take_node_ota_request(void) { int r = node_ota_request; node_ota_request = -1; return r; }
+bool plat_node_ota_begin(char *ssid, char *pass, uint8_t ip[4], uint16_t *port)
+{
+    strcpy(ssid, "AIO-Feeder-OTA");
+    strcpy(pass, "sim-password");
+    ip[0] = 192; ip[1] = 168; ip[2] = 4; ip[3] = 1;
+    *port = 80;
+    ota_ap_open = true;
+    ota_served = false;
+    return true;
+}
+void plat_node_ota_end(void) { ota_ap_open = false; }
+bool plat_node_ota_served(void) { return ota_served; }
 
 /* ------------------------------------------------------------ storage */
 
@@ -74,11 +154,15 @@ typedef struct {
     uint8_t          last_feed_seq, last_feed_code;
     uint8_t          seq;
     int              feeds_run;
+    uint8_t          fw_minor;
+    uint32_t         boot_ms;      /* sim time of the last (re)boot */
+    uint32_t         ota_until_ms; /* downloading until then, 0 = not */
+    bool             ota_broken;   /* this feeder fails to download */
 } fake_node_t;
 
 static fake_node_t fnodes[2] = {
-    { .mac = { 0x5C, 0xCF, 0x7F, 0x10, 0x20, 0x01 }, .powered = true },
-    { .mac = { 0x5C, 0xCF, 0x7F, 0x10, 0x20, 0x02 }, .powered = true },
+    { .mac = { 0x5C, 0xCF, 0x7F, 0x10, 0x20, 0x01 }, .powered = true, .fw_minor = 1 },
+    { .mac = { 0x5C, 0xCF, 0x7F, 0x10, 0x20, 0x02 }, .powered = true, .fw_minor = 1 },
 };
 
 /* Frames travelling node -> HMI, delivered from the main loop. */
@@ -184,6 +268,12 @@ static void fnode_rx(fake_node_t *n, const uint8_t *data, uint8_t len)
         fnode_ack(n, hdr, n->last_feed_code);
         break;
     }
+    case FD_MSG_OTA_START:
+        fnode_ack(n, hdr, FD_RES_OK);
+        if (!n->ota_until_ms) {
+            n->ota_until_ms = now_ms + 8000; /* join, download, flash */
+        }
+        break;
     case FD_MSG_ACK: {
         const fd_msg_ack_t *a = (const fd_msg_ack_t *)data;
         if (a->acked_type == FD_MSG_FEED_EVENT && n->ev_pending && a->event_id == n->ev.event_id) {
@@ -201,12 +291,25 @@ static void fnode_tick(fake_node_t *n)
     if (!n->powered) {
         return;
     }
+    if (n->ota_until_ms) {
+        if (now_ms < n->ota_until_ms) {
+            return; /* off the air while it downloads */
+        }
+        /* Reboot: into the new firmware if the download worked. */
+        n->ota_until_ms = 0;
+        n->boot_ms = now_ms;
+        n->last_status_ms = 0;
+        if (ota_ap_open && !n->ota_broken) {
+            ota_served = true;
+            n->fw_minor++;
+        }
+    }
     if (!n->paired) {
         if (now_ms - n->last_hello_ms >= 400) {
             n->last_hello_ms = now_ms;
             fd_msg_hello_t h;
             fd_hdr_init(&h.hdr, FD_MSG_HELLO, ++n->seq);
-            h.fw_major = 0; h.fw_minor = 1; h.flags = FD_FLAG_PAIRING;
+            h.fw_major = 0; h.fw_minor = n->fw_minor; h.flags = FD_FLAG_PAIRING;
             to_hmi(n, &h, sizeof(h));
         }
         return;
@@ -233,13 +336,13 @@ static void fnode_tick(fake_node_t *n)
         fd_hdr_init(&s.hdr, FD_MSG_STATUS, ++n->seq);
         s.node_id = n->node_id;
         s.flags = n->time_valid ? FD_FLAG_TIME_VALID : 0;
-        s.fw_major = 0; s.fw_minor = 1;
+        s.fw_major = 0; s.fw_minor = n->fw_minor;
         s.sched_rev = n->rev;
         s.local_epoch = fnode_epoch(n);
         s.last_feed_epoch = n->guard.last_feed_epoch;
         s.on_ms_today = n->guard.on_ms_today;
         s.feeds_today = n->guard.feeds_today;
-        s.uptime_s = now_ms / 1000;
+        s.uptime_s = (now_ms - n->boot_ms) / 1000;
         to_hmi(n, &s, sizeof(s));
     }
     if (n->ev_pending && (n->ev_sent_ms == 0 || now_ms - n->ev_sent_ms >= 2000)) {
@@ -282,6 +385,7 @@ static void run(uint32_t ms)
     for (uint32_t t = 0; t < ms; t += 5) {
         now_ms += 5;
         lv_tick_inc(5);
+        net_tick();
         for (size_t i = 0; i < 2; i++) {
             fnode_tick(&fnodes[i]);
         }
@@ -425,7 +529,7 @@ int main(int argc, char **argv)
     click("Rename", 0);
     shot("05_rename");
     app_rename_node(0, "Goldfish");
-    lv_obj_send_event(lv_obj_find_by_name(lv_layer_top(), "rename_kb"), LV_EVENT_CANCEL, NULL);
+    lv_obj_send_event(lv_obj_find_by_name(lv_layer_top(), "text_kb"), LV_EVENT_CANCEL, NULL);
     run(300);
 
     printf("Build a schedule\n");
@@ -490,14 +594,87 @@ int main(int argc, char **argv)
     CHECK(app_log_count() == 2, "history has both feeds");
     shot("13_history");
 
+    printf("Wi-Fi: wrong password, then the right one\n");
+    fnodes[1].powered = true;
+    ui_show_page(5);
+    run(500);
+    shot("14_network_start");
+    click("Scan", 0);
+    run(2500);
+    shot("15_network_scan");
+    click("Connect", 0);
+    shot("16_wifi_password");
+    lv_textarea_set_text(lv_obj_find_by_name(lv_layer_top(), "text_ta"), "wrong");
+    lv_obj_send_event(lv_obj_find_by_name(lv_layer_top(), "text_kb"), LV_EVENT_READY, NULL);
+    run(4000);
+    CHECK(plat_wifi_state() == PLAT_WIFI_FAILED, "wrong password is reported as not connected");
+    click("Scan", 0);
+    run(2500);
+    click("Connect", 0);
+    lv_textarea_set_text(lv_obj_find_by_name(lv_layer_top(), "text_ta"), "fishfood");
+    lv_obj_send_event(lv_obj_find_by_name(lv_layer_top(), "text_kb"), LV_EVENT_READY, NULL);
+    run(4000);
+    CHECK(plat_wifi_state() == PLAT_WIFI_CONNECTED, "connects with the right password");
+
+    printf("Internet time with a +08:00 offset\n");
+    uint32_t before = plat_local_epoch();
+    CHECK(!plat_ntp_synced(), "clock is not touched while internet time is off");
+    lv_subject_set_int(lv_xml_get_subject(NULL, "utc_off"), 480);
+    lv_subject_set_int(lv_xml_get_subject(NULL, "ntp_on"), 1);
+    run(3000);
+    CHECK(plat_ntp_synced(), "internet time synchronised");
+    {
+        fd_civil_t c;
+        fd_civil_from_epoch(plat_local_epoch(), &c);
+        /* True UTC is 00:10 plus the elapsed run time; local must be 8 h ahead. */
+        uint32_t want = TRUE_UTC_AT_START + now_ms / 1000 + 8 * 3600;
+        CHECK(plat_local_epoch() - want <= 2 || want - plat_local_epoch() <= 2, "local time is UTC + 8 h");
+        CHECK(c.day == 9 && c.hour >= 8 && c.hour <= 9, "the date and hour look right");
+        (void)before;
+    }
+    run(25000);
+    CHECK(fnodes[0].clock_offset == 0 && fnodes[1].clock_offset == 0, "feeders followed the new time");
+    shot("17_network_connected");
+
+    printf("Feeder firmware update\n");
+    CHECK(app_node_ota_start(0) != NULL, "refused while no firmware is uploaded");
+    node_fw_size = 312000;
+    lv_subject_set_int(lv_xml_get_subject(NULL, "ota_allow"), 1);
+    run(500);
+    CHECK(updates_allowed, "uploads are allowed after the switch");
+    node_ota_request = 0; /* "Update" pressed on the web page */
+    run(1000);
+    CHECK(app_ota_state() == APP_OTA_RUNNING && ota_ap_open, "update started, access point open");
+    shot("18_feeder_updating");
+    run(25000);
+    CHECK(app_ota_state() == APP_OTA_DONE && !ota_ap_open, "update finished, access point closed");
+    CHECK(fnodes[0].fw_minor == 2 && app_node_rt(0)->status.fw_minor == 2, "feeder reports the new version");
+    CHECK(fnodes[0].count == 2 && fnodes[0].feeds_run == 1, "schedule and history kept");
+    shot("19_feeder_updated");
+    click("OK", 0);
+
+    fnodes[1].ota_broken = true;
+    node_ota_request = 1;
+    run(30000);
+    CHECK(app_ota_state() == APP_OTA_FAILED && !ota_ap_open, "a failed download is reported as failed");
+    CHECK(fnodes[1].fw_minor == 1, "the feeder kept its old firmware");
+    click("OK", 0);
+    CHECK(strstr(last_status, "\"ota\":\"failed\"") && strstr(last_status, "\"name\":\"Goldfish\""),
+          "web status carries the feeders and the update state");
+
+    run(10 * 60000);
+    CHECK(!updates_allowed, "uploads are refused again after 10 minutes");
+    lv_display_trigger_activity(NULL);
+    run(500);
+
     printf("Light theme\n");
     lv_subject_set_int(lv_xml_get_subject(NULL, "dark"), 0);
     ui_show_page(0);
     run(300);
-    shot("14_home_light");
+    shot("20_home_light");
     ui_show_page(1);
     run(300);
-    shot("15_schedule_light");
+    shot("21_schedule_light");
 
     printf("Screen sleep\n");
     CHECK(backlight, "backlight on while active");

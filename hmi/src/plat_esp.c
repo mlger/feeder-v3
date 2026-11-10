@@ -6,14 +6,13 @@
 #include <sys/time.h>
 
 #include "board.h"
-#include "esp_event.h"
 #include "esp_log.h"
-#include "esp_netif.h"
 #include "esp_now.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "net.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "plat.h"
@@ -24,31 +23,60 @@ static const char *TAG = "plat";
 
 /* ----------------------------------------------------------------- time */
 
-/* The system clock is kept in local time; there is no time zone handling. */
+/* The system clock runs in UTC. Local time is UTC plus a fixed offset chosen
+ * by the user; the RTC chip holds local time. */
 static bool time_valid;
+static bool offset_loaded;
+static int32_t utc_offset_s;
 
 uint32_t plat_millis(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
 
 bool plat_time_valid(void) { return time_valid; }
 
-uint32_t plat_local_epoch(void)
+static uint32_t utc_now(void)
 {
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return (uint32_t)tv.tv_sec;
 }
 
-static void set_system_time(uint32_t local_epoch)
+uint32_t plat_local_epoch(void) { return (uint32_t)((int32_t)utc_now() + utc_offset_s); }
+
+static void set_utc(uint32_t utc)
 {
-    const struct timeval tv = { .tv_sec = (time_t)local_epoch };
+    const struct timeval tv = { .tv_sec = (time_t)utc };
     settimeofday(&tv, NULL);
     time_valid = true;
 }
 
 void plat_set_local_epoch(uint32_t local_epoch)
 {
-    set_system_time(local_epoch);
+    set_utc((uint32_t)((int32_t)local_epoch - utc_offset_s));
     board_rtc_set(local_epoch);
+}
+
+void plat_set_utc_offset(int16_t minutes)
+{
+    utc_offset_s = (int32_t)minutes * 60;
+    if (!offset_loaded) {
+        /* First call, at start-up: load the clock from the RTC. */
+        offset_loaded = true;
+        uint32_t local;
+        if (board_rtc_get(&local)) {
+            set_utc((uint32_t)((int32_t)local - utc_offset_s));
+        } else {
+            ESP_LOGW(TAG, "RTC has no valid time; set the clock in Settings");
+        }
+    } else if (time_valid) {
+        board_rtc_set(plat_local_epoch()); /* local time moved with the offset */
+    }
+}
+
+/* NTP has just set the system clock. */
+void plat_esp_time_synced(void)
+{
+    time_valid = true;
+    board_rtc_set(plat_local_epoch());
 }
 
 /* -------------------------------------------------------------- storage */
@@ -141,25 +169,11 @@ esp_err_t plat_esp_init(void)
     }
     ESP_ERROR_CHECK(err);
 
-    uint32_t epoch;
-    if (board_rtc_get(&epoch)) {
-        set_system_time(epoch);
-    } else {
-        ESP_LOGW(TAG, "RTC has no valid time; set the clock in Settings");
-    }
-
     rx_queue = xQueueCreate(16, sizeof(rx_frame_t));
 
-    /* Wi-Fi is started only as the radio for ESP-NOW; it does not join a
-     * network yet, so the channel stays on 1. */
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    wifi_init_config_t wcfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&wcfg));
-    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_ERROR_CHECK(esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE));
+    /* ESP-NOW shares the radio with the Wi-Fi station and follows its
+     * channel; feeders search the channels until they find the HMI. */
+    ESP_ERROR_CHECK(net_init());
     ESP_ERROR_CHECK(esp_now_init());
     ESP_ERROR_CHECK(esp_now_register_recv_cb(on_recv));
     return ESP_OK;

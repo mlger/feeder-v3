@@ -306,9 +306,11 @@ const char *app_node_ota_start(int idx)
         return "The feeder is offline";
     }
     memset(&ota.msg, 0, sizeof(ota.msg));
-    if (!plat_node_ota_begin(ota.msg.ssid, ota.msg.pass, ota.msg.ip, &ota.msg.port)) {
+    uint16_t port = 0;
+    if (!plat_node_ota_begin(ota.msg.ssid, ota.msg.pass, ota.msg.ip, &port)) {
         return "Could not open the update access point";
     }
+    ota.msg.port = port;
     fd_hdr_init(&ota.msg.hdr, FD_MSG_OTA_START, ++tx_seq);
     ota.msg.size = plat_node_fw_size();
     ota.state = APP_OTA_RUNNING;
