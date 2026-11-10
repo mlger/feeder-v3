@@ -1,0 +1,19 @@
+<component>
+  <view extends="lv_obj" width="100%" flex_grow="1" flex_flow="column" style_pad_row="8">
+    <style name="plain"/>
+    <bind_flag_if_not_eq subject="page" flag="hidden" ref_value="3"/>
+    <row>
+      <lv_label bind_text="log_summary" flex_grow="1">
+        <style name="muted"/>
+      </lv_label>
+      <lv_button height="44">
+        <style name="quiet"/>
+        <event_cb callback="on_log_clear" trigger="clicked"/>
+        <lv_label text="Clear" align="center"/>
+      </lv_button>
+    </row>
+    <lv_obj name="hist_list" width="100%" flex_grow="1" flex_flow="column" style_pad_row="4">
+      <style name="plain"/>
+    </lv_obj>
+  </view>
+</component>

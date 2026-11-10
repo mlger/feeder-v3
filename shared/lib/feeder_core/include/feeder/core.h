@@ -40,6 +40,21 @@ typedef struct {
 
 void fd_time_split(uint32_t local_epoch, fd_tod_t *out);
 
+typedef struct {
+    uint16_t year;
+    uint8_t  month;  /* 1-12 */
+    uint8_t  day;    /* 1-31 */
+    uint8_t  hour;
+    uint8_t  minute;
+    uint8_t  second;
+    uint8_t  dow;    /* 0 = Sunday */
+} fd_civil_t;
+
+/* Calendar date <-> local epoch. `dow` is ignored by fd_civil_to_epoch. */
+void     fd_civil_from_epoch(uint32_t local_epoch, fd_civil_t *out);
+uint32_t fd_civil_to_epoch(const fd_civil_t *c);
+uint8_t  fd_days_in_month(uint16_t year, uint8_t month);
+
 /* ---- schedule ---- */
 
 /* True if every field of the entry is in range. */

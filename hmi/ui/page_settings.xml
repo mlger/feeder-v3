@@ -1,0 +1,53 @@
+<component>
+  <view extends="lv_obj" width="100%" flex_grow="1" flex_flow="column" style_pad_row="10">
+    <style name="plain"/>
+    <bind_flag_if_not_eq subject="page" flag="hidden" ref_value="4"/>
+
+    <lv_obj width="100%" height="content" flex_flow="column" style_pad_all="12" style_pad_row="8"
+            scrollable="false">
+      <lv_label text="Date and time" style_text_font="font_l"/>
+      <row style_pad_column="6">
+        <stepper title="Year" subject="set_year" display="set_year" min="2024" max="2099"/>
+        <stepper title="Month" subject="set_month" display="set_month" fmt="%02d" min="1" max="12" rollover="true"/>
+        <stepper title="Day" subject="set_day" display="set_day" fmt="%02d" min="1" max="31" rollover="true"/>
+        <stepper title="Hour" subject="set_hour" display="set_hour" fmt="%02d" min="0" max="23" rollover="true"/>
+        <stepper title="Minute" subject="set_min" display="set_min" fmt="%02d" min="0" max="59" rollover="true"/>
+      </row>
+      <row>
+        <lv_label text="Feeders are synchronised to this clock." flex_grow="1">
+          <style name="muted"/>
+        </lv_label>
+        <lv_button height="44">
+          <event_cb callback="on_time_set" trigger="clicked"/>
+          <lv_label text="Set clock" align="center"/>
+        </lv_button>
+      </row>
+    </lv_obj>
+
+    <lv_obj width="100%" height="content" flex_flow="row" style_pad_all="12"
+            style_pad_column="16" style_flex_cross_place="center" scrollable="false">
+      <col flex_grow="1" width="10" style_pad_row="2">
+        <lv_label text="Manual feed portion" style_text_font="font_l"/>
+        <lv_label text="Used by the Feed now button.">
+          <style name="muted"/>
+        </lv_label>
+      </col>
+      <stepper title="Pulse length" subject="feed_on" display="feed_on_txt" fmt="%s" min="1" max="50"/>
+      <stepper title="Pulses" subject="feed_pulses" display="feed_pulses" min="1" max="20"/>
+    </lv_obj>
+
+    <lv_obj width="100%" height="content" flex_flow="row" style_pad_all="12"
+            style_pad_column="16" style_flex_cross_place="center" scrollable="false">
+      <lv_label text="Dark theme" style_text_font="font_l"/>
+      <lv_switch width="60" height="32" bind_checked="dark"/>
+      <lv_obj flex_grow="1" height="1">
+        <style name="plain"/>
+      </lv_obj>
+      <stepper title="Screen off" w="144" subject="sleep_min" display="sleep_txt" fmt="%s" min="0" max="60"/>
+    </lv_obj>
+
+    <lv_label bind_text="about">
+      <style name="muted"/>
+    </lv_label>
+  </view>
+</component>

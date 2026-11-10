@@ -1,0 +1,41 @@
+<component>
+  <view extends="lv_obj" width="100%" height="100%" scrollable="false">
+    <style name="backdrop"/>
+    <lv_obj width="620" height="content" align="center" flex_flow="column"
+            style_pad_all="16" style_pad_row="12" scrollable="false">
+      <lv_label bind_text="ed_title" style_text_font="font_l"/>
+      <row style_pad_column="16">
+        <lv_roller name="ed_hour" width="90" visible_row_count="3" bind_value="ed_hour"
+                   style_text_font="font_l"/>
+        <lv_label text=":" style_text_font="font_xl"/>
+        <lv_roller name="ed_min" width="90" visible_row_count="3" bind_value="ed_min"
+                   style_text_font="font_l"/>
+        <lv_obj flex_grow="1" height="1">
+          <style name="plain"/>
+        </lv_obj>
+        <stepper title="Pulse length" subject="ed_on" display="ed_on_txt" fmt="%s" min="1" max="50"/>
+        <stepper title="Pulses" subject="ed_pulses" display="ed_pulses" min="1" max="20"/>
+      </row>
+      <row style_flex_main_place="space_between">
+        <lv_button width="74" height="46" checkable="true" bind_checked="ed_d0"><style name="day"/><style name="day_on" selector="checked"/><lv_label text="Sun" align="center"/></lv_button>
+        <lv_button width="74" height="46" checkable="true" bind_checked="ed_d1"><style name="day"/><style name="day_on" selector="checked"/><lv_label text="Mon" align="center"/></lv_button>
+        <lv_button width="74" height="46" checkable="true" bind_checked="ed_d2"><style name="day"/><style name="day_on" selector="checked"/><lv_label text="Tue" align="center"/></lv_button>
+        <lv_button width="74" height="46" checkable="true" bind_checked="ed_d3"><style name="day"/><style name="day_on" selector="checked"/><lv_label text="Wed" align="center"/></lv_button>
+        <lv_button width="74" height="46" checkable="true" bind_checked="ed_d4"><style name="day"/><style name="day_on" selector="checked"/><lv_label text="Thu" align="center"/></lv_button>
+        <lv_button width="74" height="46" checkable="true" bind_checked="ed_d5"><style name="day"/><style name="day_on" selector="checked"/><lv_label text="Fri" align="center"/></lv_button>
+        <lv_button width="74" height="46" checkable="true" bind_checked="ed_d6"><style name="day"/><style name="day_on" selector="checked"/><lv_label text="Sat" align="center"/></lv_button>
+      </row>
+      <row style_flex_main_place="end">
+        <lv_button width="130" height="48">
+          <style name="quiet"/>
+          <event_cb callback="on_ed_cancel" trigger="clicked"/>
+          <lv_label text="Cancel" align="center"/>
+        </lv_button>
+        <lv_button width="130" height="48">
+          <event_cb callback="on_ed_save" trigger="clicked"/>
+          <lv_label text="Save" align="center"/>
+        </lv_button>
+      </row>
+    </lv_obj>
+  </view>
+</component>

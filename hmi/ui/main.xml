@@ -1,0 +1,33 @@
+<component>
+  <view extends="lv_obj" width="100%" height="100%" flex_flow="row" style_pad_column="0"
+        scrollable="false">
+    <style name="plain"/>
+    <lv_obj width="92" height="100%" flex_flow="column" style_pad_all="6" style_pad_row="6"
+            style_bg_color="#rail_bg" style_bg_opa="255" style_border_width="0" style_radius="0"
+            scrollable="false">
+      <nav_button icon="&#xF015;" label="Home" index="0"/>
+      <nav_button icon="&#xF0F3;" label="Schedule" index="1"/>
+      <nav_button icon="&#xF1EB;" label="Feeders" index="2"/>
+      <nav_button icon="&#xF00B;" label="History" index="3"/>
+      <nav_button icon="&#xF013;" label="Settings" index="4"/>
+    </lv_obj>
+    <lv_obj flex_grow="1" height="100%" flex_flow="column" style_pad_all="12" style_pad_row="10"
+            scrollable="false">
+      <style name="plain"/>
+      <row height="40">
+        <lv_label bind_text="title" style_text_font="font_xl"/>
+        <lv_label bind_text="alert" flex_grow="1" style_text_color="#warn" style_text_align="center"
+                  long_mode="dots"/>
+        <lv_label bind_text="date">
+          <style name="muted"/>
+        </lv_label>
+        <lv_label bind_text="clock" style_text_font="font_xl"/>
+      </row>
+      <page_home/>
+      <page_schedule/>
+      <page_nodes/>
+      <page_history/>
+      <page_settings/>
+    </lv_obj>
+  </view>
+</component>

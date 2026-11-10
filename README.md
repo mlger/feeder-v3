@@ -5,7 +5,7 @@ manages one feeder node per tank over ESP-NOW.
 
 | Part | Hardware | Firmware |
 | --- | --- | --- |
-| **HMI** | Waveshare ESP32-S3-Touch-LCD-4.3B | ESP-IDF 6.1 + LVGL 9 (PlatformIO) |
+| **HMI** | Waveshare ESP32-S3-Touch-LCD-4.3B | ESP-IDF 6.1 + LVGL 9.4.0 with XML screens (PlatformIO) |
 | **Node** | ESP8266 NodeMCU V3 + DS3231 + relay + 12 V solenoid (JF-0530B) | Arduino-ESP8266 (PlatformIO) |
 
 ## How it works
@@ -35,9 +35,16 @@ manages one feeder node per tank over ESP-NOW.
 ```
 shared/   feeder_core library (wire protocol, schedule, safety logic) + host unit tests
 node/     ESP8266 node firmware
-hmi/      ESP32-S3 touchscreen firmware            (not started yet)
+hmi/      ESP32-S3 touchscreen firmware
+  ui/       the screens, as LVGL XML loaded at run time
+  lib/      feeder_app: application model + UI glue (portable)
+  src/      board support, ESP-NOW, storage (ESP-IDF)
+  sim/      host simulator: runs the real UI against fake feeders
 web/      GitHub Pages: web flasher, demo, guide   (not started yet)
 ```
+
+LVGL is pinned to 9.4.0 because it is the last release that can load XML at
+run time; later releases removed the loader.
 
 ## Build
 
@@ -54,6 +61,49 @@ pio run -d node
 ```bash
 pio run -d node -t upload
 ```
+
+```bash
+pio run -d hmi
+```
+
+```bash
+pio run -d hmi -t upload
+```
+
+### HMI simulator
+
+The simulator builds the HMI application for the PC with a headless display.
+It pairs two simulated feeders, edits a schedule, runs scheduled and manual
+feeds, checks the results and writes a screenshot of every screen.
+
+```bash
+git clone --depth 1 --branch v9.4.0 https://github.com/lvgl/lvgl.git /tmp/lvgl
+```
+
+```bash
+cmake -S hmi/sim -B build/sim -DLVGL_DIR=/tmp/lvgl && cmake --build build/sim
+```
+
+```bash
+mkdir -p build/shots && build/sim/feeder_sim build/shots
+```
+
+## Using the HMI
+
+| Page | What it does |
+| --- | --- |
+| Home | One card per tank: state, last and next feed, today's total, **Feed now** |
+| Schedule | Feeding times per tank (time, days, pulse length, pulses) and the safety limits |
+| Feeders | Paired feeders (rename, remove) and feeders in pairing mode (add) |
+| History | The last 64 feeds and refused feeds |
+| Settings | Clock, manual feed portion, theme, screen-off time |
+
+To add a feeder, open **Feeders**, hold the feeder's FLASH button for 3 s and
+tap **Add** when it appears. The HMI then sends it the time and its schedule.
+
+The HMI clock comes from the board's RTC. Set it once in **Settings**; every
+feeder is kept within 5 s of it. Wi-Fi, NTP, OTA updates and SD-card logging
+are not implemented yet.
 
 ## Node wiring (NodeMCU V3)
 

@@ -55,6 +55,48 @@ void fd_time_split(uint32_t local_epoch, fd_tod_t *out)
     out->dow = (uint8_t)((days + 4u) % 7u); /* 1970-01-01 was a Thursday */
 }
 
+/* Days since 1970-01-01 <-> calendar date (Howard Hinnant's algorithms). */
+void fd_civil_from_epoch(uint32_t local_epoch, fd_civil_t *out)
+{
+    int32_t z = (int32_t)(local_epoch / 86400u) + 719468;
+    int32_t era = z / 146097;
+    int32_t doe = z - era * 146097;
+    int32_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    int32_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    int32_t mp = (5 * doy + 2) / 153;
+    fd_tod_t t;
+
+    out->day = (uint8_t)(doy - (153 * mp + 2) / 5 + 1);
+    out->month = (uint8_t)(mp < 10 ? mp + 3 : mp - 9);
+    out->year = (uint16_t)(yoe + era * 400 + (out->month <= 2 ? 1 : 0));
+    fd_time_split(local_epoch, &t);
+    out->hour = t.hour;
+    out->minute = t.minute;
+    out->second = t.second;
+    out->dow = t.dow;
+}
+
+uint32_t fd_civil_to_epoch(const fd_civil_t *c)
+{
+    int32_t y = c->year - (c->month <= 2 ? 1 : 0);
+    int32_t era = y / 400;
+    int32_t yoe = y - era * 400;
+    int32_t doy = (153 * (c->month + (c->month > 2 ? -3 : 9)) + 2) / 5 + c->day - 1;
+    int32_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    int32_t days = era * 146097 + doe - 719468;
+    return (uint32_t)days * 86400u + c->hour * 3600u + c->minute * 60u + c->second;
+}
+
+uint8_t fd_days_in_month(uint16_t year, uint8_t month)
+{
+    static const uint8_t dim[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    bool leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    if (month < 1 || month > 12) {
+        return 30;
+    }
+    return (month == 2 && leap) ? 29 : dim[month - 1];
+}
+
 /* ---- schedule ---- */
 
 bool fd_sched_entry_valid(const fd_sched_entry_t *e)

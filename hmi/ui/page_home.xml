@@ -1,0 +1,14 @@
+<component>
+  <view extends="lv_obj" width="100%" flex_grow="1" flex_flow="column" style_pad_row="8">
+    <style name="plain"/>
+    <bind_flag_if_not_eq subject="page" flag="hidden" ref_value="0"/>
+    <lv_label text="No feeders yet. Open Feeders to add one.">
+      <style name="muted"/>
+      <bind_flag_if_not_eq subject="node_count" flag="hidden" ref_value="0"/>
+    </lv_label>
+    <lv_obj name="home_list" width="100%" flex_grow="1" flex_flow="row_wrap"
+            style_pad_row="12" style_pad_column="12">
+      <style name="plain"/>
+    </lv_obj>
+  </view>
+</component>

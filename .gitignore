@@ -7,3 +7,6 @@ managed_components/
 dependencies.lock
 *.pyc
 .DS_Store
+hmi/lib/feeder_app/src/ui_xml_gen.c
+sdkconfig.*
+!sdkconfig.defaults

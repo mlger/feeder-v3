@@ -1,0 +1,8 @@
+{
+  "name": "feeder_app",
+  "version": "0.1.0",
+  "description": "AIO-Feeder HMI application: node registry, ESP-NOW protocol handling and the LVGL XML user interface. Portable; runs on the board and in the host simulator.",
+  "frameworks": "*",
+  "platforms": "*",
+  "build": { "includeDir": "include", "srcDir": "src" }
+}

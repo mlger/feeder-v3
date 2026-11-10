@@ -4,6 +4,10 @@ on:
   push:
   pull_request:
 
+env:
+  PLATFORMIO_VERSION: "6.2.0"
+  LVGL_VERSION: v9.4.0
+
 jobs:
   test:
     name: Core unit tests
@@ -13,8 +17,30 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install platformio==6.2.0
+      - run: pip install platformio==$PLATFORMIO_VERSION
       - run: pio test -d shared
+
+  sim:
+    name: HMI simulator
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - run: git clone --depth 1 --branch $LVGL_VERSION https://github.com/lvgl/lvgl.git "$RUNNER_TEMP/lvgl"
+      - run: cmake -S hmi/sim -B build/sim -G Ninja -DLVGL_DIR="$RUNNER_TEMP/lvgl"
+      - run: cmake --build build/sim
+      - name: Run the scripted session
+        run: mkdir -p build/shots && build/sim/feeder_sim build/shots
+      - name: Convert screenshots to PNG
+        if: always()
+        run: |
+          pip install pillow
+          python3 -c "import glob; from PIL import Image; [Image.open(f).save(f[:-4] + '.png') for f in glob.glob('build/shots/*.ppm')]"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hmi-screenshots
+          path: build/shots/*.png
 
   node:
     name: Node firmware (ESP8266)
@@ -28,9 +54,31 @@ jobs:
         with:
           path: ~/.platformio
           key: pio-node-${{ hashFiles('node/platformio.ini') }}
-      - run: pip install platformio==6.2.0
+      - run: pip install platformio==$PLATFORMIO_VERSION
       - run: pio run -d node
       - uses: actions/upload-artifact@v4
         with:
           name: node-firmware
           path: node/.pio/build/nodemcuv2/firmware.bin
+
+  hmi:
+    name: HMI firmware (ESP32-S3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-hmi-${{ hashFiles('hmi/platformio.ini') }}
+      - run: pip install platformio==$PLATFORMIO_VERSION
+      - run: pio run -d hmi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hmi-firmware
+          path: |
+            hmi/.pio/build/hmi/firmware.bin
+            hmi/.pio/build/hmi/bootloader.bin
+            hmi/.pio/build/hmi/partitions.bin

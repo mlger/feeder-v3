@@ -1,0 +1,19 @@
+<component>
+  <api>
+    <prop name="when" type="string"/>
+    <prop name="tank" type="string"/>
+    <prop name="what" type="string"/>
+    <prop name="result" type="string"/>
+    <prop name="result_color" type="color" default="0x8a94a0"/>
+  </api>
+  <view extends="lv_obj" width="100%" height="content" flex_flow="row"
+        style_flex_cross_place="center" style_pad_ver="8" style_pad_hor="10"
+        style_pad_column="10" scrollable="false">
+    <lv_label text="$when" width="150"/>
+    <lv_label text="$tank" width="120" long_mode="dots"/>
+    <lv_label text="$what" width="150">
+      <style name="muted"/>
+    </lv_label>
+    <lv_label text="$result" flex_grow="1" style_text_color="$result_color" long_mode="dots"/>
+  </view>
+</component>

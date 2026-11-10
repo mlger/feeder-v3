@@ -1,0 +1,36 @@
+<component>
+  <view extends="lv_obj" width="100%" flex_grow="1" flex_flow="column" style_pad_row="8">
+    <style name="plain"/>
+    <bind_flag_if_not_eq subject="page" flag="hidden" ref_value="1"/>
+    <lv_label text="Add a feeder first.">
+      <style name="muted"/>
+      <bind_flag_if_not_eq subject="node_count" flag="hidden" ref_value="0"/>
+    </lv_label>
+    <col flex_grow="1">
+      <bind_flag_if_eq subject="node_count" flag="hidden" ref_value="0"/>
+      <row>
+        <lv_dropdown name="sched_dd" width="240" bind_value="sched_node"/>
+        <lv_obj flex_grow="1" height="1">
+          <style name="plain"/>
+        </lv_obj>
+        <lv_button height="44">
+          <event_cb callback="on_sched_add" trigger="clicked"/>
+          <lv_label text="&#xF067;  Add feeding time" align="center"/>
+        </lv_button>
+      </row>
+      <lv_obj name="sched_list" width="100%" flex_grow="1" flex_flow="column" style_pad_row="8">
+        <style name="plain"/>
+      </lv_obj>
+      <lv_obj width="100%" height="content" flex_flow="row" style_pad_all="10"
+              style_pad_column="16" style_flex_cross_place="center" scrollable="false">
+        <lv_label text="Safety limits" flex_grow="1"/>
+        <stepper title="Cooldown" w="144" subject="lim_cool" display="lim_cool_txt" fmt="%s"
+                 step="5" min="0" max="240"/>
+        <stepper title="Daily limit" w="144" subject="lim_daily" display="lim_daily_txt" fmt="%s"
+                 step="5" min="0" max="600"/>
+        <stepper title="Pulse gap" w="144" subject="lim_gap" display="lim_gap_txt" fmt="%s"
+                 step="1" min="2" max="50"/>
+      </lv_obj>
+    </col>
+  </view>
+</component>

@@ -28,6 +28,42 @@ static void test_time_split(void)
     TEST_ASSERT_EQUAL_UINT8(0, t.dow); /* Sunday */
 }
 
+static void test_civil_round_trip(void)
+{
+    fd_civil_t c;
+    fd_civil_from_epoch(AT(0, 7, 30, 15), &c);
+    TEST_ASSERT_EQUAL_UINT16(2026, c.year);
+    TEST_ASSERT_EQUAL_UINT8(11, c.month);
+    TEST_ASSERT_EQUAL_UINT8(9, c.day);
+    TEST_ASSERT_EQUAL_UINT8(7, c.hour);
+    TEST_ASSERT_EQUAL_UINT8(30, c.minute);
+    TEST_ASSERT_EQUAL_UINT8(15, c.second);
+    TEST_ASSERT_EQUAL_UINT8(1, c.dow);
+    TEST_ASSERT_EQUAL_UINT32(AT(0, 7, 30, 15), fd_civil_to_epoch(&c));
+
+    /* Leap day and year boundaries. */
+    fd_civil_t leap = { 2028, 2, 29, 23, 59, 59, 0 };
+    uint32_t e = fd_civil_to_epoch(&leap);
+    fd_civil_from_epoch(e + 1, &c);
+    TEST_ASSERT_EQUAL_UINT8(3, c.month);
+    TEST_ASSERT_EQUAL_UINT8(1, c.day);
+    fd_civil_from_epoch(0, &c);
+    TEST_ASSERT_EQUAL_UINT16(1970, c.year);
+    TEST_ASSERT_EQUAL_UINT8(1, c.month);
+    TEST_ASSERT_EQUAL_UINT8(1, c.day);
+
+    /* Every day for 80 years survives a round trip. */
+    for (uint32_t d = 0; d < 80u * 366u; d++) {
+        uint32_t t = d * 86400u + 12345u;
+        fd_civil_from_epoch(t, &c);
+        TEST_ASSERT_EQUAL_UINT32(t, fd_civil_to_epoch(&c));
+    }
+    TEST_ASSERT_EQUAL_UINT8(29, fd_days_in_month(2028, 2));
+    TEST_ASSERT_EQUAL_UINT8(28, fd_days_in_month(2026, 2));
+    TEST_ASSERT_EQUAL_UINT8(28, fd_days_in_month(2100, 2));
+    TEST_ASSERT_EQUAL_UINT8(31, fd_days_in_month(2026, 12));
+}
+
 /* ---- schedule ---- */
 
 static void test_sched_due(void)
@@ -209,6 +245,7 @@ int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_time_split);
+    RUN_TEST(test_civil_round_trip);
     RUN_TEST(test_sched_due);
     RUN_TEST(test_sched_ignores_invalid_entry);
     RUN_TEST(test_guard_clamps_to_hard_limits);

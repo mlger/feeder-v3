@@ -1,0 +1,26 @@
+<component>
+  <api>
+    <prop name="name" type="string"/>
+    <prop name="state" type="string"/>
+    <prop name="state_color" type="color" default="0x8a94a0"/>
+    <prop name="last" type="string"/>
+    <prop name="next" type="string"/>
+    <prop name="today" type="string"/>
+  </api>
+  <view extends="lv_obj" width="336" height="content" flex_flow="column"
+        style_pad_all="14" style_pad_row="6" scrollable="false">
+    <row>
+      <lv_label text="$name" style_text_font="font_l" flex_grow="1" long_mode="dots"/>
+      <lv_label text="$state" style_text_color="$state_color"/>
+    </row>
+    <lv_label text="$last"/>
+    <lv_label text="$next"/>
+    <lv_label text="$today">
+      <style name="muted"/>
+    </lv_label>
+    <lv_button name="feed_btn" width="100%" height="52">
+      <event_cb callback="on_feed_click" trigger="clicked"/>
+      <lv_label text="Feed now" align="center" style_text_font="font_l"/>
+    </lv_button>
+  </view>
+</component>

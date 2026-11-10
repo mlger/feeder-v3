@@ -1,0 +1,18 @@
+<component>
+  <view extends="lv_obj" width="100%" flex_grow="1" flex_flow="column" style_pad_row="8">
+    <style name="plain"/>
+    <bind_flag_if_not_eq subject="page" flag="hidden" ref_value="2"/>
+    <lv_label text="Paired feeders" style_text_font="font_l"/>
+    <lv_obj name="node_list" width="100%" height="content" flex_flow="column" style_pad_row="8">
+      <style name="plain"/>
+    </lv_obj>
+    <lv_label text="Discovered" style_text_font="font_l"/>
+    <lv_label text="Hold the FLASH button on a feeder for 3 seconds. It appears here while its LED blinks fast."
+              width="100%" long_mode="wrap">
+      <style name="muted"/>
+    </lv_label>
+    <lv_obj name="found_list" width="100%" height="content" flex_flow="column" style_pad_row="8">
+      <style name="plain"/>
+    </lv_obj>
+  </view>
+</component>

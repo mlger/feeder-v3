@@ -1,0 +1,27 @@
+<component>
+  <api>
+    <prop name="title" type="string"/>
+    <prop name="text" type="string"/>
+    <prop name="ok_text" type="string" default="OK"/>
+    <prop name="no_cancel" type="bool" default="false"/>
+  </api>
+  <view extends="lv_obj" width="100%" height="100%" scrollable="false">
+    <style name="backdrop"/>
+    <lv_obj width="460" height="content" align="center" flex_flow="column"
+            style_pad_all="18" style_pad_row="14" scrollable="false">
+      <lv_label text="$title" style_text_font="font_l"/>
+      <lv_label text="$text" width="100%" long_mode="wrap"/>
+      <row style_flex_main_place="end">
+        <lv_button width="130" height="48" hidden="$no_cancel">
+          <style name="quiet"/>
+          <event_cb callback="on_dialog_cancel" trigger="clicked"/>
+          <lv_label text="Cancel" align="center"/>
+        </lv_button>
+        <lv_button width="130" height="48">
+          <event_cb callback="on_dialog_ok" trigger="clicked"/>
+          <lv_label text="$ok_text" align="center"/>
+        </lv_button>
+      </row>
+    </lv_obj>
+  </view>
+</component>
