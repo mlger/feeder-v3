@@ -1,0 +1,36 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: Core unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install platformio==6.2.0
+      - run: pio test -d shared
+
+  node:
+    name: Node firmware (ESP8266)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-node-${{ hashFiles('node/platformio.ini') }}
+      - run: pip install platformio==6.2.0
+      - run: pio run -d node
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-firmware
+          path: node/.pio/build/nodemcuv2/firmware.bin

@@ -1,0 +1,8 @@
+{
+  "name": "feeder_core",
+  "version": "0.1.0",
+  "description": "AIO-Feeder shared protocol, schedule matching and feed safety logic (portable C99)",
+  "frameworks": "*",
+  "platforms": "*",
+  "build": { "includeDir": "include", "srcDir": "src" }
+}
