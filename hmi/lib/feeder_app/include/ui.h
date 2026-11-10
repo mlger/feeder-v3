@@ -9,7 +9,7 @@ extern "C" {
  * and app_init() has run. */
 void ui_init(void);
 
-/* Switch page: 0 Home, 1 Schedule, 2 Feeders, 3 History, 4 Settings. */
+/* Switch page: 0 Home, 1 Schedule, 2 Feeders, 3 History, 4 Settings, 5 Network. */
 void ui_show_page(int page);
 
 #ifdef __cplusplus

@@ -1,0 +1,19 @@
+<component>
+  <api>
+    <prop name="ssid" type="string"/>
+    <prop name="detail" type="string"/>
+  </api>
+  <view extends="lv_obj" width="100%" height="content" flex_flow="row"
+        style_flex_cross_place="center" style_pad_ver="6" style_pad_hor="10"
+        style_pad_column="12" scrollable="false">
+    <lv_label text="&#xF1EB;"/>
+    <lv_label text="$ssid" flex_grow="1" long_mode="dots"/>
+    <lv_label text="$detail" style_text_font="font_s">
+      <style name="muted"/>
+    </lv_label>
+    <lv_button height="40">
+      <event_cb callback="on_wifi_pick" trigger="clicked"/>
+      <lv_label text="Connect" align="center"/>
+    </lv_button>
+  </view>
+</component>

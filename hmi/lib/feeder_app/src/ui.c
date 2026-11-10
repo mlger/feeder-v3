@@ -17,7 +17,10 @@
 #define UI_TICK_MS       250
 #define LIMITS_SETTLE_MS 1200
 
-enum { PAGE_HOME, PAGE_SCHEDULE, PAGE_NODES, PAGE_HISTORY, PAGE_SETTINGS };
+enum { PAGE_HOME, PAGE_SCHEDULE, PAGE_NODES, PAGE_HISTORY, PAGE_SETTINGS, PAGE_NETWORK };
+
+#define UPDATES_WINDOW_MS (10u * 60u * 1000u)
+#define MAX_APS 8
 
 /* ------------------------------------------------------------ subjects */
 
@@ -29,6 +32,7 @@ static lv_subject_t s_ed_hour, s_ed_min, s_ed_on, s_ed_pulses, s_ed_on_txt, s_ed
 static lv_subject_t s_ed_day[7];
 static lv_subject_t s_set_year, s_set_month, s_set_day, s_set_hour, s_set_min;
 static lv_subject_t s_feed_on, s_feed_pulses, s_feed_on_txt, s_sleep_min, s_sleep_txt;
+static lv_subject_t s_wifi_status, s_ntp_on, s_ntp_status, s_utc_off, s_utc_txt, s_ota_allow, s_ota_status;
 
 #define STR_SUBJECT(subj, name, len, init)                                      \
     do {                                                                        \
@@ -46,7 +50,7 @@ static lv_subject_t s_feed_on, s_feed_pulses, s_feed_on_txt, s_sleep_min, s_slee
 /* --------------------------------------------------------------- state */
 
 static lv_obj_t *root;
-static lv_obj_t *home_list, *sched_list, *sched_dd, *node_list, *found_list, *hist_list;
+static lv_obj_t *home_list, *sched_list, *sched_dd, *node_list, *found_list, *hist_list, *wifi_list;
 static lv_obj_t *modal; /* the one open dialog/editor, or NULL */
 
 static int  dd_map[APP_MAX_NODES]; /* dropdown position -> node slot */
@@ -56,6 +60,13 @@ static uint32_t limits_dirty_ms;   /* 0 = clean */
 static int  limits_dirty_node = -1;
 static int  ed_entry = -1;         /* entry being edited, -1 = new */
 static int  rename_node = -1;
+typedef enum { TEXT_RENAME, TEXT_WIFI_PASS } text_purpose_t;
+static text_purpose_t text_purpose;
+static plat_ap_t aps[MAX_APS];
+static int  ap_count;
+static bool scanning;
+static char wifi_pick[33];
+static uint32_t updates_since_ms; /* when uploads were allowed; 0 = not allowed */
 static uint32_t last_minute;
 static bool backlight_on = true;
 
@@ -481,9 +492,9 @@ static void apply_theme(void)
 static void on_page_changed(lv_observer_t *o, lv_subject_t *s)
 {
     (void)o;
-    static const char *const titles[] = { "Home", "Schedule", "Feeders", "History", "Settings" };
+    static const char *const titles[] = { "Home", "Schedule", "Feeders", "History", "Settings", "Network" };
     int p = lv_subject_get_int(s);
-    lv_subject_copy_string(&s_title, titles[p >= 0 && p < 5 ? p : 0]);
+    lv_subject_copy_string(&s_title, titles[p >= 0 && p < 6 ? p : 0]);
     if (p == PAGE_SETTINGS && !loading) {
         load_time_steppers();
     }
@@ -727,13 +738,35 @@ static void on_node_remove(lv_event_t *e)
                 "Remove");
 }
 
-static void rename_done(lv_event_t *e)
+static void text_done(lv_event_t *e)
 {
     if (lv_event_get_code(e) == LV_EVENT_READY && modal) {
-        lv_obj_t *ta = lv_obj_find_by_name(modal, "rename_ta");
-        app_rename_node(rename_node, lv_textarea_get_text(ta));
+        const char *text = lv_textarea_get_text(lv_obj_find_by_name(modal, "text_ta"));
+        if (text_purpose == TEXT_RENAME) {
+            app_rename_node(rename_node, text);
+        } else {
+            plat_wifi_connect(wifi_pick, text);
+        }
     }
     modal_close();
+}
+
+static void text_open(text_purpose_t purpose, const char *label, const char *initial, uint32_t max_len,
+                      bool password)
+{
+    text_purpose = purpose;
+    modal_close();
+    const char *attrs[] = { "label", label, NULL, NULL };
+    modal = lv_xml_create(lv_layer_top(), "text_dialog", attrs);
+    lv_obj_t *ta = lv_obj_find_by_name(modal, "text_ta");
+    lv_obj_t *kb = lv_obj_find_by_name(modal, "text_kb");
+    lv_textarea_set_max_length(ta, max_len);
+    lv_textarea_set_password_mode(ta, password);
+    lv_textarea_set_text(ta, initial);
+    lv_keyboard_set_textarea(kb, ta);
+    lv_obj_add_state(ta, LV_STATE_FOCUSED);
+    lv_obj_add_event_cb(kb, text_done, LV_EVENT_READY, NULL);
+    lv_obj_add_event_cb(kb, text_done, LV_EVENT_CANCEL, NULL);
 }
 
 static void on_node_rename(lv_event_t *e)
@@ -744,15 +777,191 @@ static void on_node_rename(lv_event_t *e)
         return;
     }
     rename_node = idx;
-    modal_close();
-    modal = lv_xml_create(lv_layer_top(), "rename_dialog", NULL);
-    lv_obj_t *ta = lv_obj_find_by_name(modal, "rename_ta");
-    lv_obj_t *kb = lv_obj_find_by_name(modal, "rename_kb");
-    lv_textarea_set_text(ta, n->name);
-    lv_keyboard_set_textarea(kb, ta);
-    lv_obj_add_state(ta, LV_STATE_FOCUSED);
-    lv_obj_add_event_cb(kb, rename_done, LV_EVENT_READY, NULL);
-    lv_obj_add_event_cb(kb, rename_done, LV_EVENT_CANCEL, NULL);
+    text_open(TEXT_RENAME, "Name", n->name, FD_NAME_LEN - 1, false);
+}
+
+/* ------------------------------------------------------------- network */
+
+static void set_text(lv_subject_t *subj, const char *text)
+{
+    if (strcmp(lv_subject_get_string(subj), text) != 0) {
+        lv_subject_copy_string(subj, text);
+    }
+}
+
+static void refresh_wifi_list(void)
+{
+    lv_obj_clean(wifi_list);
+    if (scanning) {
+        lv_obj_t *l = lv_label_create(wifi_list);
+        lv_label_set_text(l, "Scanning...");
+        return;
+    }
+    for (int i = 0; i < ap_count; i++) {
+        char detail[32];
+        snprintf(detail, sizeof(detail), "%s%d dBm", aps[i].secure ? LV_SYMBOL_EYE_CLOSE "  " : "",
+                 aps[i].rssi);
+        const char *attrs[] = { "ssid", aps[i].ssid, "detail", detail, NULL, NULL };
+        lv_obj_t *row = lv_xml_create(wifi_list, "wifi_row", attrs);
+        row_set_index(row, i);
+    }
+}
+
+static void refresh_network(void)
+{
+    char ssid[33], ip[20], buf[128];
+    plat_wifi_info(ssid, sizeof(ssid), ip, sizeof(ip));
+    plat_wifi_state_t ws = plat_wifi_state();
+    switch (ws) {
+    case PLAT_WIFI_CONNECTED:  snprintf(buf, sizeof(buf), "Connected to %s, address %s", ssid, ip); break;
+    case PLAT_WIFI_CONNECTING: snprintf(buf, sizeof(buf), "Connecting to %s...", ssid); break;
+    case PLAT_WIFI_FAILED:     snprintf(buf, sizeof(buf), "Cannot reach %s, retrying", ssid); break;
+    default:                   snprintf(buf, sizeof(buf), "Not set up. Tap Scan to choose a network."); break;
+    }
+    set_text(&s_wifi_status, buf);
+
+    if (!app_settings()->ntp) {
+        snprintf(buf, sizeof(buf), "Off. Set your UTC offset, then switch on.");
+    } else if (plat_ntp_synced()) {
+        snprintf(buf, sizeof(buf), "Clock is set from the internet.");
+    } else if (ws == PLAT_WIFI_CONNECTED) {
+        snprintf(buf, sizeof(buf), "Waiting for the time server...");
+    } else {
+        snprintf(buf, sizeof(buf), "Needs Wi-Fi. Using the built-in clock.");
+    }
+    set_text(&s_ntp_status, buf);
+
+    if (updates_since_ms && plat_millis() - updates_since_ms > UPDATES_WINDOW_MS) {
+        lv_subject_set_int(&s_ota_allow, 0); /* the observer closes the window */
+    }
+    const app_node_cfg_t *on = app_node(app_ota_node());
+    if (app_ota_state() == APP_OTA_RUNNING) {
+        snprintf(buf, sizeof(buf), "Updating %s. Leave it powered.", on ? on->name : "feeder");
+    } else if (ws != PLAT_WIFI_CONNECTED) {
+        snprintf(buf, sizeof(buf), "Needs Wi-Fi.");
+    } else if (!updates_since_ms) {
+        snprintf(buf, sizeof(buf), "Switch on, then open http://%s in a browser on the same network.", ip);
+    } else {
+        snprintf(buf, sizeof(buf), "Uploads allowed for 10 minutes at http://%s", ip);
+    }
+    set_text(&s_ota_status, buf);
+
+    if (scanning) {
+        int n = plat_wifi_scan_get(aps, MAX_APS);
+        if (n >= 0) {
+            scanning = false;
+            ap_count = n;
+            refresh_wifi_list();
+        }
+    }
+
+    /* A feeder update asked for on the web page. */
+    int req = plat_take_node_ota_request();
+    if (req >= 0) {
+        const char *err = app_node_ota_start(req);
+        if (err) {
+            dialog_open(DLG_NONE, 0, "Update not started", err, NULL);
+        }
+    }
+}
+
+/* State for the web page: uploads, feeders and the running update. */
+static void publish_status(void)
+{
+    static const char *const ota_names[] = { "idle", "running", "done", "failed" };
+    char json[700];
+    int n = snprintf(json, sizeof(json),
+                     "{\"version\":\"" APP_VERSION "\",\"allow\":%s,\"node_fw\":%u,"
+                     "\"ota\":\"%s\",\"ota_node\":%d,\"ota_msg\":\"%s\",\"nodes\":[",
+                     updates_since_ms ? "true" : "false", (unsigned)plat_node_fw_size(),
+                     ota_names[app_ota_state()], app_ota_node(), app_ota_message());
+    bool first = true;
+    for (int i = 0; i < APP_MAX_NODES && n < (int)sizeof(json) - 80; i++) {
+        const app_node_cfg_t *nd = app_node(i);
+        if (!nd) {
+            continue;
+        }
+        const app_node_rt_t *r = app_node_rt(i);
+        /* Names come from the on-screen keyboard; drop what JSON cannot carry. */
+        char name[FD_NAME_LEN];
+        size_t k = 0;
+        for (const char *p = nd->name; *p && k < sizeof(name) - 1; p++) {
+            if (*p != '"' && *p != '\\' && (unsigned char)*p >= 0x20) {
+                name[k++] = *p;
+            }
+        }
+        name[k] = '\0';
+        n += snprintf(json + n, sizeof(json) - (size_t)n,
+                      "%s{\"i\":%d,\"name\":\"%s\",\"online\":%s,\"fw\":\"%u.%u\"}", first ? "" : ",", i,
+                      name, app_node_online(i) ? "true" : "false", r->have_status ? r->status.fw_major : 0,
+                      r->have_status ? r->status.fw_minor : 0);
+        first = false;
+    }
+    snprintf(json + n, sizeof(json) - (size_t)n, "]}");
+    plat_publish_status(json);
+}
+
+static void on_wifi_scan(lv_event_t *e)
+{
+    (void)e;
+    plat_wifi_scan();
+    scanning = true;
+    refresh_wifi_list();
+}
+
+static void on_wifi_forget(lv_event_t *e)
+{
+    (void)e;
+    plat_wifi_forget();
+}
+
+static void on_wifi_pick(lv_event_t *e)
+{
+    int i = row_index_of(e);
+    if (i < 0 || i >= ap_count) {
+        return;
+    }
+    snprintf(wifi_pick, sizeof(wifi_pick), "%s", aps[i].ssid);
+    if (aps[i].secure) {
+        text_open(TEXT_WIFI_PASS, "Password", "", 63, true);
+    } else {
+        plat_wifi_connect(wifi_pick, "");
+    }
+    ap_count = 0;
+    refresh_wifi_list();
+}
+
+static void on_network_changed(lv_observer_t *o, lv_subject_t *s)
+{
+    (void)o;
+    (void)s;
+    int off = lv_subject_get_int(&s_utc_off);
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%c%02d:%02d", off < 0 ? '-' : '+', (off < 0 ? -off : off) / 60,
+             (off < 0 ? -off : off) % 60);
+    lv_subject_copy_string(&s_utc_txt, buf);
+    if (loading) {
+        return;
+    }
+    app_settings_t *st = app_settings();
+    if (st->utc_offset_min != off) {
+        st->utc_offset_min = (int16_t)off;
+        plat_set_utc_offset(st->utc_offset_min);
+        last_minute = 0; /* redraw the clock now */
+    }
+    if (st->ntp != (uint8_t)lv_subject_get_int(&s_ntp_on)) {
+        st->ntp = (uint8_t)lv_subject_get_int(&s_ntp_on);
+        plat_ntp_enable(st->ntp);
+    }
+    app_settings_save();
+}
+
+static void on_ota_allow_changed(lv_observer_t *o, lv_subject_t *s)
+{
+    (void)o;
+    bool on = lv_subject_get_int(s) != 0;
+    updates_since_ms = on ? (plat_millis() ? plat_millis() : 1) : 0;
+    plat_updates_allow(on);
 }
 
 static void on_found_add(lv_event_t *e)
@@ -876,6 +1085,17 @@ static void ui_tick(lv_timer_t *t)
                  res == FD_RES_OK ? "feeding started" : app_result_text(res));
         dialog_open(DLG_NONE, 0, res == FD_RES_OK ? "Feeding" : "Not fed", text, NULL);
     }
+    if (ch & APP_CH_OTA) {
+        const app_node_cfg_t *n = app_node(app_ota_node());
+        char text[96];
+        if (app_ota_state() == APP_OTA_DONE || app_ota_state() == APP_OTA_FAILED) {
+            snprintf(text, sizeof(text), "%s: %s", n ? n->name : "Feeder", app_ota_message());
+            dialog_open(DLG_NONE, 0, app_ota_state() == APP_OTA_DONE ? "Feeder updated" : "Update failed",
+                        text, NULL);
+        }
+    }
+    refresh_network();
+    publish_status();
     refresh_clock(false);
 
     /* Screen sleep. Any touch resets LVGL's inactivity timer and wakes it. */
@@ -894,7 +1114,7 @@ static void register_xml(void)
     static const char *const order[] = {
         "globals", "row", "col", "nav_button", "stepper", "tank_card", "sched_row", "node_row",
         "found_row", "hist_row", "page_home", "page_schedule", "page_nodes", "page_history",
-        "page_settings", "sched_editor", "dialog", "rename_dialog", "main",
+        "page_settings", "wifi_row", "page_network", "sched_editor", "dialog", "text_dialog", "main",
     };
     for (size_t i = 0; i < sizeof(order) / sizeof(order[0]); i++) {
         const char *xml = ui_xml_get(order[i]);
@@ -955,6 +1175,17 @@ void ui_init(void)
     INT_SUBJECT(s_sleep_min, "sleep_min", st->sleep_min);
     STR_SUBJECT(s_sleep_txt, "sleep_txt", 16, "");
 
+    STR_SUBJECT(s_wifi_status, "wifi_status", 128, "");
+    INT_SUBJECT(s_ntp_on, "ntp_on", st->ntp);
+    STR_SUBJECT(s_ntp_status, "ntp_status", 128, "");
+    INT_SUBJECT(s_utc_off, "utc_off", st->utc_offset_min);
+    STR_SUBJECT(s_utc_txt, "utc_txt", 16, "");
+    INT_SUBJECT(s_ota_allow, "ota_allow", 0);
+    STR_SUBJECT(s_ota_status, "ota_status", 128, "");
+
+    lv_xml_register_event_cb(NULL, "on_wifi_scan", on_wifi_scan);
+    lv_xml_register_event_cb(NULL, "on_wifi_forget", on_wifi_forget);
+    lv_xml_register_event_cb(NULL, "on_wifi_pick", on_wifi_pick);
     lv_xml_register_event_cb(NULL, "on_feed_click", on_feed_click);
     lv_xml_register_event_cb(NULL, "on_sched_add", on_sched_add);
     lv_xml_register_event_cb(NULL, "on_sched_edit", on_sched_edit);
@@ -980,6 +1211,7 @@ void ui_init(void)
     node_list = lv_obj_find_by_name(root, "node_list");
     found_list = lv_obj_find_by_name(root, "found_list");
     hist_list = lv_obj_find_by_name(root, "hist_list");
+    wifi_list = lv_obj_find_by_name(root, "wifi_list");
 
     lv_subject_add_observer(&s_page, on_page_changed, NULL);
     lv_subject_add_observer(&s_sched_node, on_sched_node_changed, NULL);
@@ -991,6 +1223,9 @@ void ui_init(void)
     lv_subject_add_observer(&s_sleep_min, on_settings_changed, NULL);
     lv_subject_add_observer(&s_feed_on, on_settings_changed, NULL);
     lv_subject_add_observer(&s_feed_pulses, on_settings_changed, NULL);
+    lv_subject_add_observer(&s_utc_off, on_network_changed, NULL);
+    lv_subject_add_observer(&s_ntp_on, on_network_changed, NULL);
+    lv_subject_add_observer(&s_ota_allow, on_ota_allow_changed, NULL);
     lv_subject_add_observer(&s_set_year, on_set_date_changed, NULL);
     lv_subject_add_observer(&s_set_month, on_set_date_changed, NULL);
     lv_subject_add_observer(&s_set_day, on_set_date_changed, NULL);

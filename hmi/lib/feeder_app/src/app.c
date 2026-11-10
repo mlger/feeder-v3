@@ -49,8 +49,25 @@ static struct {
     int      last_node;
 } feed = { .last_node = -1 };
 
+#define OTA_TIMEOUT_MS  150000u
+#define OTA_RETRY_MS    1000u
+#define OTA_START_TRIES 8
+
+static struct {
+    app_ota_state_t    state;
+    int                node;
+    uint32_t           start_ms, last_ms;
+    uint8_t            tries;
+    bool               accepted; /* the feeder acknowledged the request */
+    fd_msg_ota_start_t msg;
+    char               text[64];
+} ota = { .node = -1 };
+
 static void save_nodes(void) { plat_save("nodes", &nodes, sizeof(nodes)); }
 static void save_log(void) { plat_save("log", &logbuf, sizeof(logbuf)); }
+
+static void ota_finish(app_ota_state_t state, const char *text);
+static void ota_on_status(int idx, const fd_msg_status_t *st);
 
 /* ---- init ---- */
 
@@ -72,7 +89,11 @@ void app_init(void)
         settings.s.sleep_min = 5;
         settings.s.feed_on_ds = 10;
         settings.s.feed_pulses = 1;
+        settings.s.ntp = 0;
+        settings.s.utc_offset_min = 0;
     }
+    plat_set_utc_offset(settings.s.utc_offset_min);
+    plat_ntp_enable(settings.s.ntp);
     memset(rt, 0, sizeof(rt));
     memset(found, 0, sizeof(found));
     for (int i = 0; i < APP_MAX_NODES; i++) {
@@ -259,6 +280,88 @@ void app_log_clear(void)
     changes |= APP_CH_LOG;
 }
 
+/* ---- feeder firmware update ---- */
+
+static void ota_finish(app_ota_state_t state, const char *text)
+{
+    plat_node_ota_end();
+    ota.state = state;
+    snprintf(ota.text, sizeof(ota.text), "%s", text);
+    changes |= APP_CH_OTA | APP_CH_NODES;
+}
+
+const char *app_node_ota_start(int idx)
+{
+    const app_node_cfg_t *n = app_node(idx);
+    if (!n) {
+        return "No such feeder";
+    }
+    if (ota.state == APP_OTA_RUNNING) {
+        return "Another update is running";
+    }
+    if (plat_node_fw_size() == 0) {
+        return "Upload the feeder firmware first";
+    }
+    if (!app_node_online(idx)) {
+        return "The feeder is offline";
+    }
+    memset(&ota.msg, 0, sizeof(ota.msg));
+    if (!plat_node_ota_begin(ota.msg.ssid, ota.msg.pass, ota.msg.ip, &ota.msg.port)) {
+        return "Could not open the update access point";
+    }
+    fd_hdr_init(&ota.msg.hdr, FD_MSG_OTA_START, ++tx_seq);
+    ota.msg.size = plat_node_fw_size();
+    ota.state = APP_OTA_RUNNING;
+    ota.node = idx;
+    ota.accepted = false;
+    ota.tries = 1;
+    ota.start_ms = ota.last_ms = plat_millis();
+    ota.text[0] = '\0';
+    plat_send(n->mac, &ota.msg, sizeof(ota.msg));
+    changes |= APP_CH_OTA;
+    return NULL;
+}
+
+/* The feeder reboots into the new firmware and reports in again. */
+static void ota_on_status(int idx, const fd_msg_status_t *st)
+{
+    if (ota.state != APP_OTA_RUNNING || ota.node != idx || !ota.accepted) {
+        return;
+    }
+    if (st->uptime_s * 1000u < plat_millis() - ota.start_ms) {
+        if (plat_node_ota_served()) {
+            char text[64];
+            snprintf(text, sizeof(text), "Now running firmware %u.%u", st->fw_major, st->fw_minor);
+            ota_finish(APP_OTA_DONE, text);
+        } else {
+            /* It restarted without taking the whole file. */
+            ota_finish(APP_OTA_FAILED, "The feeder could not download the firmware");
+        }
+    }
+}
+
+static void ota_tick(uint32_t ms)
+{
+    if (ota.state != APP_OTA_RUNNING) {
+        return;
+    }
+    const app_node_cfg_t *n = app_node(ota.node);
+    if (!n) {
+        ota_finish(APP_OTA_FAILED, "The feeder was removed");
+    } else if (ms - ota.start_ms > OTA_TIMEOUT_MS) {
+        ota_finish(APP_OTA_FAILED, ota.accepted ? "The feeder did not come back"
+                                                : "The feeder did not answer");
+    } else if (!ota.accepted && ms - ota.last_ms >= OTA_RETRY_MS && ota.tries < OTA_START_TRIES) {
+        ota.last_ms = ms;
+        ota.tries++;
+        plat_send(n->mac, &ota.msg, sizeof(ota.msg)); /* same seq */
+    }
+}
+
+app_ota_state_t app_ota_state(void) { return ota.state; }
+int app_ota_node(void) { return ota.node; }
+const char *app_ota_message(void) { return ota.text; }
+
 /* ---- receive ---- */
 
 static void on_hello(const uint8_t mac[6])
@@ -308,14 +411,13 @@ void app_on_packet(const uint8_t mac[6], const uint8_t *data, uint8_t len)
 
     switch (type) {
     case FD_MSG_STATUS: {
-        bool was_online = app_node_online(idx);
         memcpy(&r->status, data, sizeof(r->status));
+        ota_on_status(idx, &r->status);
         r->have_status = true;
         r->adopted = true;
         r->last_seen_ms = plat_millis();
         send_ack(mac, hdr, 0);
         reconcile(idx);
-        (void)was_online;
         changes |= APP_CH_NODES;
         break;
     }
@@ -335,6 +437,14 @@ void app_on_packet(const uint8_t mac[6], const uint8_t *data, uint8_t len)
         if (a->acked_type == FD_MSG_PAIR) {
             r->adopted = true;
             changes |= APP_CH_NODES;
+        } else if (a->acked_type == FD_MSG_OTA_START && ota.state == APP_OTA_RUNNING &&
+                   ota.node == idx && hdr->seq == ota.msg.hdr.seq) {
+            if (a->code == FD_RES_OK) {
+                ota.accepted = true;
+            } else {
+                ota_finish(APP_OTA_FAILED, a->code == FD_RES_BUSY ? "The feeder is busy feeding"
+                                                                   : "The feeder refused the update");
+            }
         } else if (a->acked_type == FD_MSG_FEED_NOW && feed.active && feed.node == idx &&
                    hdr->seq == feed.seq) {
             feed.active = false;
@@ -370,6 +480,8 @@ void app_tick(void)
             send_feed(); /* same seq: the node will not feed twice */
         }
     }
+
+    ota_tick(ms);
 
     /* Online/offline transitions need a redraw even with no traffic. */
     static uint8_t online_mask;

@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define APP_VERSION    "0.1.0"
+#define APP_VERSION    "0.2.0"
 #define APP_MAX_NODES  8
 #define APP_MAX_FOUND  4
 #define APP_LOG_SIZE   64
@@ -66,6 +66,8 @@ typedef struct {
     uint8_t sleep_min;     /* screen off after N idle minutes, 0 = never */
     uint8_t feed_on_ds;    /* manual feed portion */
     uint8_t feed_pulses;
+    uint8_t ntp;           /* 1 = follow internet time */
+    int16_t utc_offset_min;
 } app_settings_t;
 
 /* What changed; the UI redraws the matching part. */
@@ -74,7 +76,8 @@ typedef enum {
     APP_CH_FOUND    = 1 << 1, /* discovered (unpaired) nodes */
     APP_CH_LOG      = 1 << 2,
     APP_CH_SCHEDULE = 1 << 3,
-    APP_CH_FEED     = 1 << 4  /* a manual feed got its answer */
+    APP_CH_FEED     = 1 << 4, /* a manual feed got its answer */
+    APP_CH_OTA      = 1 << 5  /* a feeder update changed state */
 } app_change_t;
 
 void app_init(void);
@@ -111,6 +114,21 @@ bool    app_feed_now(int idx); /* false if another request is in flight */
 bool    app_feed_busy(void);
 int     app_feed_last_node(void);
 uint8_t app_feed_last_result(void); /* fd_result_t or APP_FEED_NO_REPLY */
+
+/* ---- feeder firmware update ---- */
+typedef enum {
+    APP_OTA_IDLE,
+    APP_OTA_RUNNING,
+    APP_OTA_DONE,
+    APP_OTA_FAILED
+} app_ota_state_t;
+
+/* Tell a feeder to fetch the firmware uploaded on the web page.
+ * Returns NULL on success, or why it could not start. */
+const char     *app_node_ota_start(int idx);
+app_ota_state_t app_ota_state(void);
+int             app_ota_node(void);
+const char     *app_ota_message(void); /* detail for DONE / FAILED */
 
 /* ---- log ---- */
 int                    app_log_count(void);

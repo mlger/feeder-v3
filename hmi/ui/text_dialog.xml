@@ -1,11 +1,15 @@
+<!-- One line of text typed on the on-screen keyboard. -->
 <component>
+  <api>
+    <prop name="label" type="string"/>
+  </api>
   <view extends="lv_obj" width="100%" height="100%" scrollable="false">
     <style name="backdrop"/>
     <lv_obj width="520" height="content" align="top_mid" y="16" flex_flow="row"
             style_pad_all="14" style_pad_column="12" style_flex_cross_place="center" scrollable="false">
-      <lv_label text="Name"/>
-      <lv_textarea name="rename_ta" flex_grow="1" one_line="true" max_length="15"/>
+      <lv_label text="$label"/>
+      <lv_textarea name="text_ta" flex_grow="1" one_line="true"/>
     </lv_obj>
-    <lv_keyboard name="rename_kb" width="100%" height="260" align="bottom_mid"/>
+    <lv_keyboard name="text_kb" width="100%" height="260" align="bottom_mid"/>
   </view>
 </component>

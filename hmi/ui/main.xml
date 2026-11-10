@@ -10,6 +10,7 @@
       <nav_button icon="&#xF1EB;" label="Feeders" index="2"/>
       <nav_button icon="&#xF00B;" label="History" index="3"/>
       <nav_button icon="&#xF013;" label="Settings" index="4"/>
+      <nav_button icon="&#xF019;" label="Network" index="5"/>
     </lv_obj>
     <lv_obj flex_grow="1" height="100%" flex_flow="column" style_pad_all="12" style_pad_row="10"
             scrollable="false">
@@ -28,6 +29,7 @@
       <page_nodes/>
       <page_history/>
       <page_settings/>
+      <page_network/>
     </lv_obj>
   </view>
 </component>

@@ -225,6 +225,23 @@ static void test_proto_validate(void)
     TEST_ASSERT_EQUAL_UINT8(0, fd_proto_validate(NULL, 10));
 }
 
+static void test_proto_ota_start(void)
+{
+    fd_msg_ota_start_t m;
+    memset(&m, 0, sizeof(m));
+    fd_hdr_init(&m.hdr, FD_MSG_OTA_START, 1);
+    strcpy(m.ssid, "AIO-Feeder-OTA");
+    strcpy(m.pass, "abcd1234efgh");
+    TEST_ASSERT_EQUAL_UINT8(FD_MSG_OTA_START, fd_proto_validate((uint8_t *)&m, sizeof(m)));
+    TEST_ASSERT_EQUAL_UINT8(0, fd_proto_validate((uint8_t *)&m, sizeof(m) - 1));
+    /* Strings that are not terminated are rejected. */
+    memset(m.ssid, 'A', sizeof(m.ssid));
+    TEST_ASSERT_EQUAL_UINT8(0, fd_proto_validate((uint8_t *)&m, sizeof(m)));
+    m.ssid[sizeof(m.ssid) - 1] = '\0';
+    memset(m.pass, 'B', sizeof(m.pass));
+    TEST_ASSERT_EQUAL_UINT8(0, fd_proto_validate((uint8_t *)&m, sizeof(m)));
+}
+
 static void test_proto_sched_set_length(void)
 {
     fd_msg_sched_set_t m;
@@ -257,6 +274,7 @@ int main(void)
     RUN_TEST(test_pulse_clamps_and_survives_millis_wrap);
     RUN_TEST(test_pulse_abort_and_empty);
     RUN_TEST(test_proto_validate);
+    RUN_TEST(test_proto_ota_start);
     RUN_TEST(test_proto_sched_set_length);
     return UNITY_END();
 }

@@ -33,7 +33,8 @@ typedef enum {
     FD_MSG_STATUS_REQ = 7,  /* hmi  -> node: send a STATUS now */
     FD_MSG_STATUS     = 8,  /* node -> hmi: periodic heartbeat */
     FD_MSG_FEED_EVENT = 9,  /* node -> hmi: a feed ran or was refused */
-    FD_MSG_ACK        = 10  /* both ways */
+    FD_MSG_ACK        = 10, /* both ways */
+    FD_MSG_OTA_START  = 11  /* hmi  -> node: fetch new firmware over Wi-Fi */
 } fd_msg_type_t;
 
 /* Outcome of a feed request. Also used as the ACK code. */
@@ -147,6 +148,21 @@ typedef struct FD_PACKED {
     uint8_t  pulses_done;
     uint16_t on_ms_total;
 } fd_msg_feed_event_t;
+
+/*
+ * The HMI opens a temporary access point that serves the node firmware at
+ * http://ip:port/node.bin. The credentials are random and only valid for
+ * that one update, so sending them unencrypted gives nothing lasting away.
+ */
+#define FD_OTA_STR_LEN 24
+typedef struct FD_PACKED {
+    fd_hdr_t hdr;
+    char     ssid[FD_OTA_STR_LEN]; /* NUL terminated */
+    char     pass[FD_OTA_STR_LEN]; /* NUL terminated */
+    uint8_t  ip[4];
+    uint16_t port;
+    uint32_t size;                 /* firmware size in bytes */
+} fd_msg_ota_start_t;
 
 typedef struct FD_PACKED {
     fd_hdr_t hdr;        /* hdr.seq = seq of the message being acknowledged */
