@@ -33,6 +33,7 @@ set(APP_SRC
     ${HMI}/lib/feeder_app/src/app.c
     ${HMI}/lib/feeder_app/src/ui.c
     ${CORE}/src/core.c
+    ${CORE}/src/node.c
     ${XML_GEN})
 set(APP_INC ${HMI}/lib/feeder_app/include ${CORE}/include)
 

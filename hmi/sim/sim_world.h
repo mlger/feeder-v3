@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "feeder/core.h"
+#include "feeder/node.h"
 
 /* "Real" UTC, as the fake NTP server reports it: Mon 2026-11-09 00:10:00
  * at the moment the simulation starts. */
@@ -14,34 +14,33 @@
 #define SIM_WIFI_PASSWORD "fishfood"
 
 typedef struct {
-    uint8_t          mac[6];
-    bool             paired;
-    bool             powered;
-    bool             time_valid;
-    int32_t          clock_offset; /* node clock minus sim clock, seconds */
-    uint8_t          node_id;
-    uint16_t         rev;
-    fd_limits_t      limits;
-    uint8_t          count;
-    fd_sched_entry_t entries[FD_MAX_ENTRIES];
-    fd_guard_t       guard;
-    uint32_t         last_sched_minute;
-    uint32_t         last_status_ms, last_hello_ms;
-    uint16_t         next_event;
-    bool             ev_pending;
-    fd_msg_feed_event_t ev;
-    uint32_t         ev_sent_ms;
-    bool             have_feed_seq;
-    uint8_t          last_feed_seq, last_feed_code;
-    uint8_t          seq;
-    int              feeds_run;
-    uint8_t          fw_minor;
-    uint32_t         boot_ms;      /* sim time of the last (re)boot */
-    uint32_t         ota_until_ms; /* downloading until then, 0 = not */
-    bool             ota_broken;   /* this feeder fails to download */
-} fake_node_t;
+    uint8_t  mac[6];
+    bool     powered;       /* tests switch this to cut or restore power */
+    bool     running;
+    uint8_t  fw_minor;
+    uint8_t  channel;
+    bool     relay;
+    int      relay_pulses;  /* times the relay switched on */
+    uint32_t clock_base;    /* the feeder's clock chip: epoch at now_ms == 0 */
+    bool     clock_set;
+    bool     flash_valid;   /* flash contents, kept across reboots */
+    fd_node_cfg_t   flash_cfg;
+    fd_node_state_t flash_state;
+    uint32_t ota_until_ms;  /* downloading firmware until then, 0 = not */
+    bool     ota_broken;    /* this feeder fails to download */
+    fd_node_t n;            /* the real node state machine */
+} sim_node_t;
 
-extern fake_node_t fnodes[2];
+extern sim_node_t fnodes[2];
+extern uint8_t sim_hmi_channel; /* the channel the HMI's radio is on */
+
+/* Set a feeder's clock chip, as if it had been synchronised earlier. */
+void sim_node_set_clock(int i, uint32_t local_epoch);
+/* Make a feeder start already paired with the HMI, as after an earlier set-up. */
+void sim_node_prepair(int i, uint8_t node_id);
+/* Feeder clock minus HMI clock, in seconds. */
+int32_t sim_node_clock_error(int i);
+
 extern uint32_t now_ms;
 extern bool ntp_on, ntp_synced, updates_allowed;
 extern char last_status[800];

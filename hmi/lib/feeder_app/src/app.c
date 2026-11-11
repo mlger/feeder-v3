@@ -10,7 +10,9 @@
 #define PUSH_PERIOD_MS   3000u /* min gap between repeated pushes to a node */
 #define FEED_RETRY_MS    400u
 #define FEED_TRIES       5
-#define FOUND_TTL_MS     6000u
+/* A feeder in pairing mode visits our channel once every ~5 s (13 channels
+ * x 400 ms), so keep it listed for more than two rounds. */
+#define FOUND_TTL_MS     12000u
 #define TIME_TOLERANCE_S 5u
 
 typedef struct {

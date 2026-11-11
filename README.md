@@ -33,8 +33,9 @@ manages one feeder node per tank over ESP-NOW.
 ## Repository layout
 
 ```
-shared/   feeder_core library (wire protocol, schedule, safety logic) + host unit tests
-node/     ESP8266 node firmware
+shared/   feeder_core library: wire protocol, schedule, safety logic and the
+          feeder's whole state machine, with host unit tests
+node/     ESP8266 node firmware (hardware glue around the shared state machine)
 hmi/      ESP32-S3 touchscreen firmware
   ui/       the screens, as LVGL XML loaded at run time
   lib/      feeder_app: application model + UI glue (portable)

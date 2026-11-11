@@ -54,7 +54,10 @@ static void demo_setup(void)
         { 19, 0, FD_ENTRY_ENABLED | FD_DOW_ALL, 8, 2 },
     };
     /* These feeders have been running for a while: their clocks are set. */
-    fnodes[0].time_valid = fnodes[1].time_valid = true;
+    sim_node_set_clock(0, plat_local_epoch());
+    sim_node_set_clock(1, plat_local_epoch());
+    sim_node_prepair(0, 1);
+    sim_node_prepair(1, 2);
     int a = app_adopt(fnodes[0].mac);
     int b = app_adopt(fnodes[1].mac);
     app_rename_node(a, "Goldfish");

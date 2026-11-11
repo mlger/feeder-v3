@@ -136,6 +136,7 @@ int main(int argc, char **argv)
     if (argc > 1) {
         out_dir = argv[1];
     }
+    setvbuf(stdout, NULL, _IOLBF, 0); /* keep the log if a check crashes */
 
     lv_init();
     lv_log_register_print_cb(log_cb);
@@ -166,15 +167,15 @@ int main(int argc, char **argv)
     printf("Two feeders are put in pairing mode\n");
     fnodes[0].powered = fnodes[1].powered = true;
     ui_show_page(2);
-    run(1500);
+    run(7000); /* a feeder visits each channel once every ~5 s */
     CHECK(app_found(0) && app_found(1), "both feeders are discovered");
     shot("03_feeders_discovered");
     click("Add", 0);
     click("Add", 0);
-    run(12000);
+    run(30000);
     CHECK(app_node_count() == 2, "both feeders adopted");
     CHECK(app_node_online(0) && app_node_online(1), "both feeders online");
-    CHECK(fnodes[0].time_valid && fnodes[1].time_valid, "feeders received the time");
+    CHECK(fnodes[0].n.time_valid && fnodes[1].n.time_valid, "feeders received the time");
     shot("04_feeders_paired");
 
     printf("Rename the first feeder\n");
@@ -199,15 +200,15 @@ int main(int argc, char **argv)
     click("Save", 0);
     run(12000);
     CHECK(app_node(0)->count == 2, "two feeding times stored");
-    CHECK(fnodes[0].count == 2 && fnodes[0].rev == app_node(0)->rev, "feeder has the new schedule");
-    CHECK(fnodes[0].entries[1].hour == 18 && fnodes[0].entries[1].dow_mask == (FD_ENTRY_ENABLED | 0x3E),
+    CHECK(fnodes[0].n.cfg.count == 2 && fnodes[0].n.cfg.sched_rev == app_node(0)->rev, "feeder has the new schedule");
+    CHECK(fnodes[0].n.cfg.entries[1].hour == 18 && fnodes[0].n.cfg.entries[1].dow_mask == (FD_ENTRY_ENABLED | 0x3E),
           "weekday 18:30 entry arrived intact");
     shot("07_schedule");
 
     printf("Wait for the 08:00 scheduled feed\n");
     ui_show_page(0);
     run(90000);
-    CHECK(fnodes[0].feeds_run == 1, "scheduled feed ran once");
+    CHECK(fnodes[0].relay_pulses == 1, "scheduled feed ran once");
     CHECK(app_log_count() == 1 && app_log_get(0)->result == FD_RES_OK && app_log_get(0)->source == 0,
           "scheduled feed is in the history");
     shot("08_home");
@@ -217,7 +218,7 @@ int main(int argc, char **argv)
     shot("09_feed_confirm");
     click("Feed", 0);
     run(1000);
-    CHECK(fnodes[1].feeds_run == 1, "manual feed ran");
+    CHECK(fnodes[1].relay_pulses == 1, "manual feed ran");
     shot("10_feed_result");
     click("OK", 0);
 
@@ -225,7 +226,7 @@ int main(int argc, char **argv)
     click("Feed now", 1);
     click("Feed", 0);
     run(1000);
-    CHECK(fnodes[1].feeds_run == 1, "feeder did not feed again");
+    CHECK(fnodes[1].relay_pulses == 1, "feeder did not feed again");
     CHECK(app_feed_last_result() == FD_RES_COOLDOWN, "HMI reports the cooldown");
     shot("11_feed_refused");
     click("OK", 0);
@@ -323,8 +324,11 @@ int main(int argc, char **argv)
         CHECK(c.day == 9 && c.hour >= 8 && c.hour <= 9, "the date and hour look right");
         (void)before;
     }
-    run(25000);
-    CHECK(fnodes[0].clock_offset == 0 && fnodes[1].clock_offset == 0, "feeders followed the new time");
+    CHECK(sim_hmi_channel == 6, "joining Wi-Fi moved the controller to the router's channel");
+    run(75000); /* feeders notice the silence, search the channels and find it */
+    CHECK(app_node_online(0) && app_node_online(1), "feeders found the controller on the new channel");
+    CHECK(fnodes[0].channel == 6 && fnodes[0].flash_cfg.channel == 6, "and remembered that channel");
+    CHECK(abs(sim_node_clock_error(0)) <= 1 && abs(sim_node_clock_error(1)) <= 1, "feeders followed the new time");
     shot("17_network_connected");
 
     printf("Feeder firmware update\n");
@@ -340,7 +344,7 @@ int main(int argc, char **argv)
     run(25000);
     CHECK(app_ota_state() == APP_OTA_DONE && !ota_ap_open, "update finished, access point closed");
     CHECK(fnodes[0].fw_minor == 2 && app_node_rt(0)->status.fw_minor == 2, "feeder reports the new version");
-    CHECK(fnodes[0].count == 2 && fnodes[0].feeds_run == 1, "schedule and history kept");
+    CHECK(fnodes[0].n.cfg.count == 2 && fnodes[0].relay_pulses == 1, "schedule and history kept");
     shot("19_feeder_updated");
     click("OK", 0);
 
