@@ -61,7 +61,9 @@ void ui_fmt_portion(char *buf, size_t n, uint8_t on_ds, uint8_t pulses)
 
 void ui_fmt_grams(char *buf, size_t n, uint32_t mg)
 {
-    snprintf(buf, n, "%u.%u g", (unsigned)(mg / 1000u), (unsigned)((mg % 1000u + 50u) / 100u % 10u));
+    /* Round to a tenth of a gram first, so 1.96 g shows as 2.0 g. */
+    uint32_t tenths = (mg + 50u) / 100u;
+    snprintf(buf, n, "%u.%u g", (unsigned)(tenths / 10u), (unsigned)(tenths % 10u));
 }
 
 void ui_fmt_amount(char *buf, size_t n, int idx, uint8_t on_ds, uint8_t pulses)

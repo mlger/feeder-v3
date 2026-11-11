@@ -275,7 +275,8 @@ static void sd_log(const app_log_entry_t *e)
     char grams[12] = "";
     uint32_t mg = e->pulses ? app_mg(e->node, (uint8_t)(e->on_ms / e->pulses / 100u), e->pulses) : 0;
     if (mg) {
-        snprintf(grams, sizeof(grams), "%u.%u", (unsigned)(mg / 1000u), (unsigned)(mg % 1000u / 100u));
+        uint32_t tenths = (mg + 50u) / 100u; /* rounded, as on the screen */
+        snprintf(grams, sizeof(grams), "%u.%u", (unsigned)(tenths / 10u), (unsigned)(tenths % 10u));
     }
     snprintf(line, sizeof(line), "%04u-%02u-%02u %02u:%02u:%02u,%s,%s,%s,%u.%u,%u,%s", c.year, c.month, c.day,
              c.hour, c.minute, c.second, name, source, e->result == FD_RES_OK ? "fed" : app_result_text(e->result),

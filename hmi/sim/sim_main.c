@@ -19,6 +19,8 @@
 #include "sim_world.h"
 #include "ui.h"
 
+void ui_fmt_grams(char *buf, size_t n, uint32_t mg); /* from ui_internal.h */
+
 #define W 800
 #define SETUP_TIMEOUT_TEST_MS (5 * 60000 + 2000)
 #define H 480
@@ -381,6 +383,16 @@ int main(int argc, char **argv)
           "10 pulses weighing 6.0 g gives 0.6 g per pulse");
     CHECK(app_mg(0, 10, 3) == 1800 && app_mg(0, 20, 3) == 0, "grams are only claimed for the calibrated pulse length");
     CHECK(!app_calibrated(1), "the other feeder is not affected");
+    {
+        /* Rounding: 1.96 g is 2.0 g, not 1.0 g; 0.04 g is 0.0 g; 0.95 g is 1.0 g. */
+        char a[16], b[16], c[16], d[16];
+        ui_fmt_grams(a, sizeof(a), 1960);
+        ui_fmt_grams(b, sizeof(b), 40);
+        ui_fmt_grams(c, sizeof(c), 950);
+        ui_fmt_grams(d, sizeof(d), 12340);
+        CHECK(!strcmp(a, "2.0 g") && !strcmp(b, "0.0 g") && !strcmp(c, "1.0 g") && !strcmp(d, "12.3 g"),
+              "grams are rounded to the nearest tenth");
+    }
 
     ui_show_page(1);
     run(500);
