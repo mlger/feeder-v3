@@ -5,6 +5,14 @@ on:
     branches: ["**"]
     tags: ["v*"]
   pull_request:
+  # "Run workflow" in the Actions tab: tick the box to publish a release of
+  # the chosen branch under the version in VERSION.
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Publish a release (tag v<VERSION>)"
+        type: boolean
+        default: false
 
 env:
   PLATFORMIO_VERSION: "6.2.0"
@@ -139,31 +147,41 @@ jobs:
 
   release:
     name: Publish a release
-    # Pushing a tag such as v0.4.0 attaches the firmware files to a release.
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Either push a tag such as v0.4.0, or use "Run workflow" with the
+    # release box ticked; both attach the firmware files to a release.
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release)
     needs: [test, sim, node, hmi]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Check that the tag matches VERSION
+      - name: Work out the tag
+        id: tag
         run: |
-          if [ "v$(cat VERSION)" != "$GITHUB_REF_NAME" ]; then
+          tag="v$(cat VERSION)"
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$tag" != "$GITHUB_REF_NAME" ]; then
             echo "Tag $GITHUB_REF_NAME does not match VERSION ($(cat VERSION))." >&2
             exit 1
           fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
       - name: Name the files
         run: |
           mkdir release
-          cp artifacts/hmi-firmware/firmware.bin "release/aio-feeder-controller-$GITHUB_REF_NAME.bin"
-          cp artifacts/node-firmware/firmware.bin "release/aio-feeder-feeder-$GITHUB_REF_NAME.bin"
+          cp artifacts/hmi-firmware/firmware.bin "release/aio-feeder-controller-${{ steps.tag.outputs.tag }}.bin"
+          cp artifacts/node-firmware/firmware.bin "release/aio-feeder-feeder-${{ steps.tag.outputs.tag }}.bin"
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          gh release create "$GITHUB_REF_NAME" release/* --title "AIO-Feeder $GITHUB_REF_NAME" \
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists. Raise VERSION before releasing again." >&2
+            exit 1
+          fi
+          # Creates the tag at this commit if it does not exist yet.
+          gh release create "$TAG" release/* --target "$GITHUB_SHA" --title "AIO-Feeder $TAG" \
             --notes "Upload these two files on the controller's update page (Network > Firmware updates), or install from the project web site with a USB cable."

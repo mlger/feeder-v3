@@ -176,7 +176,10 @@ To publish a release, set `VERSION`, commit, and push a matching tag:
 git tag v$(cat VERSION) && git push origin v$(cat VERSION)
 ```
 
-CI then attaches the controller and feeder firmware files to a GitHub
+Or, without a local clone: on GitHub open **Actions > build > Run workflow**,
+choose `main` and tick **Publish a release**.
+
+Either way CI attaches the controller and feeder firmware files to a GitHub
 Release. Those are the files to upload on the controller's update page.
 
 ## Security notes
