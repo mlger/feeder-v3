@@ -22,7 +22,7 @@ jobs:
 
   sim:
     name: HMI simulator
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y ninja-build
@@ -82,3 +82,55 @@ jobs:
             hmi/.pio/build/hmi/firmware.bin
             hmi/.pio/build/hmi/bootloader.bin
             hmi/.pio/build/hmi/partitions.bin
+            hmi/.pio/build/hmi/ota_data_initial.bin
+
+  demo:
+    name: Browser demo (WebAssembly)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build emscripten
+      - run: git clone --depth 1 --branch $LVGL_VERSION https://github.com/lvgl/lvgl.git "$RUNNER_TEMP/lvgl"
+      - run: emcmake cmake -S hmi/sim -B build/web -G Ninja -DLVGL_DIR="$RUNNER_TEMP/lvgl" -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build/web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: demo
+          path: |
+            build/web/feeder_demo.js
+            build/web/feeder_demo.wasm
+
+  site:
+    name: Assemble the web site
+    needs: [node, hmi, demo]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Build the site
+        run: |
+          version="$(sed -n 's/#define APP_VERSION *"\(.*\)"/\1/p' hmi/lib/feeder_app/include/app.h)+${GITHUB_SHA::7}"
+          python3 web/build_site.py --out _site --version "$version" \
+            --hmi-dir artifacts/hmi-firmware --node-bin artifacts/node-firmware/firmware.bin \
+            --demo-dir artifacts/demo
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Publish to GitHub Pages
+    # Only the default branch is published, and only after the tests pass.
+    if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
+    needs: [site, test, sim]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

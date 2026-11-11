@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIO-Feeder: automatic fish feeder</title>
+<meta name="description" content="A touchscreen controller and wireless feeder nodes for several fish tanks. Install the firmware from your browser.">
+<link rel="stylesheet" href="style.css">
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+</head>
+<body>
+<header class="site"><div class="in">
+  <a class="brand" href="index.html">AIO-Feeder</a>
+  <nav>
+    <a href="index.html" aria-current="page">Install</a>
+    <a href="demo/">Demo</a>
+    <a href="guide.html">Guide</a>
+    <a href="https://github.com/mlger/feeder-v3">Source</a>
+  </nav>
+</div></header>
+<main class="in">
+  <h1>Feed several tanks from one touchscreen</h1>
+  <p class="lead">AIO-Feeder is a touchscreen controller and one small wireless feeder per tank. Each feeder keeps its own clock and schedule, so the fish are fed even when the controller is switched off.</p>
+  <p><a class="btn" href="demo/">Try the controller in your browser</a></p>
+
+  <h2>Install the firmware</h2>
+  <p>Plug the board into this computer with a USB data cable and press its button below. This needs Chrome or Edge on a desktop computer.</p>
+  <div class="grid">
+    <section class="card">
+      <h3>Controller</h3>
+      <p class="muted">Waveshare ESP32-S3-Touch-LCD-4.3B. Use the USB-C port marked <strong>UART</strong>.</p>
+      <esp-web-install-button manifest="firmware/manifest-hmi.json">
+        <button slot="activate">Install controller firmware</button>
+        <span slot="unsupported" class="muted">This browser cannot flash boards. Use Chrome or Edge on a desktop computer.</span>
+        <span slot="not-allowed" class="muted">Flashing needs a secure (https) page.</span>
+      </esp-web-install-button>
+    </section>
+    <section class="card">
+      <h3>Feeder</h3>
+      <p class="muted">ESP8266 NodeMCU V3 with a DS3231 clock and a relay. One per tank.</p>
+      <esp-web-install-button manifest="firmware/manifest-node.json">
+        <button slot="activate">Install feeder firmware</button>
+        <span slot="unsupported" class="muted">This browser cannot flash boards. Use Chrome or Edge on a desktop computer.</span>
+        <span slot="not-allowed" class="muted">Flashing needs a secure (https) page.</span>
+      </esp-web-install-button>
+    </section>
+  </div>
+  <p id="noinstaller" class="note" hidden>The installer could not be loaded, so the buttons above do nothing. Check your internet connection and reload, or flash with PlatformIO as described in the project's README.</p>
+  <p class="muted" style="margin-top:12px">Firmware version <span id="ver">unknown</span>. Choosing "erase device" during install also clears paired feeders, schedules and Wi-Fi settings.</p>
+
+  <h2>What it does</h2>
+  <div class="grid">
+    <div class="card"><h3>Schedules per tank</h3><p>Several feeding times a day, chosen weekdays, and a portion for each one.</p></div>
+    <div class="card"><h3>Keeps feeding on its own</h3><p>A feeder stores its schedule and runs it from a battery-backed clock.</p></div>
+    <div class="card"><h3>Guards against overfeeding</h3><p>A hard limit on every pulse, a cooldown between feeds and a daily cap.</p></div>
+    <div class="card"><h3>History and alerts</h3><p>Every feed and every refused feed is reported back and listed.</p></div>
+    <div class="card"><h3>No router needed</h3><p>Controller and feeders talk directly. Wi-Fi is optional, for internet time and updates.</p></div>
+    <div class="card"><h3>Updates without a cable</h3><p>After the first install, both devices update from a web page on your network.</p></div>
+  </div>
+
+  <h2>Next steps</h2>
+  <p>The <a href="guide.html">guide</a> covers wiring, pairing a feeder, setting the clock and updating.</p>
+  <footer><p>Open source on <a href="https://github.com/mlger/feeder-v3">GitHub</a>.</p></footer>
+</main>
+<script>
+// The installer is a separate script; say so if it never arrives.
+setTimeout(() => {
+  if (!customElements.get("esp-web-install-button")) {
+    document.getElementById("noinstaller").hidden = false;
+  }
+}, 6000);
+fetch("firmware/manifest-hmi.json").then(r => r.json()).then(m => {
+  document.getElementById("ver").textContent = m.version;
+}).catch(() => {});
+</script>
+</body>
+</html>

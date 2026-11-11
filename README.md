@@ -39,8 +39,8 @@ hmi/      ESP32-S3 touchscreen firmware
   ui/       the screens, as LVGL XML loaded at run time
   lib/      feeder_app: application model + UI glue (portable)
   src/      board support, ESP-NOW, storage (ESP-IDF)
-  sim/      host simulator: runs the real UI against fake feeders
-web/      GitHub Pages: web flasher, demo, guide   (not started yet)
+  sim/      host simulator and the WebAssembly demo
+web/      GitHub Pages site: web flasher, browser demo, guide
 ```
 
 LVGL is pinned to 9.4.0 because it is the last release that can load XML at
@@ -138,8 +138,35 @@ the air for about a minute and skips any feed due in that time.
 The web page is plain HTTP on your local network and uploads only work while
 the switch on the controller is on.
 
-Not implemented yet: SD-card logging, a set-up access point for entering
-Wi-Fi details without the touchscreen, and the GitHub Pages site.
+Not implemented yet: SD-card logging and a set-up access point for entering
+Wi-Fi details without the touchscreen.
+
+## Web site
+
+The site in `web/` has three pages: an install page that flashes either
+board from the browser (ESP Web Tools, Chrome or Edge on a desktop), the
+controller running as a WebAssembly demo against simulated feeders, and a
+build guide.
+
+CI assembles the site on every push and publishes it from the default
+branch. To switch publishing on, open the repository's **Settings > Pages**
+and set **Source** to **GitHub Actions**. The site then appears at
+`https://mlger.github.io/feeder-v3/`.
+
+To build it locally (the demo needs Emscripten; on Ubuntu 24.04
+`sudo apt install emscripten`):
+
+```bash
+emcmake cmake -S hmi/sim -B build/web -DLVGL_DIR=/tmp/lvgl -DCMAKE_BUILD_TYPE=Release && cmake --build build/web
+```
+
+```bash
+python3 web/build_site.py --out _site --version dev --hmi-dir hmi/.pio/build/hmi --node-bin node/.pio/build/nodemcuv2/firmware.bin --demo-dir build/web
+```
+
+```bash
+python3 -m http.server -d _site 8000
+```
 
 ## Node wiring (NodeMCU V3)
 

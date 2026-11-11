@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIO-Feeder demo</title>
+<meta name="description" content="The AIO-Feeder touchscreen controller running in your browser with two simulated feeders.">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<header class="site"><div class="in">
+  <a class="brand" href="../index.html">AIO-Feeder</a>
+  <nav>
+    <a href="../index.html">Install</a>
+    <a href="../demo/" aria-current="page">Demo</a>
+    <a href="../guide.html">Guide</a>
+    <a href="https://github.com/mlger/feeder-v3">Source</a>
+  </nav>
+</div></header>
+<main class="in">
+  <h1>Controller demo</h1>
+  <p class="lead">This is the controller's real software running in your browser, connected to two simulated feeders. Click or tap it as you would the touchscreen.</p>
+  <div class="screen-wrap">
+    <canvas id="screen" width="800" height="480" aria-label="AIO-Feeder controller screen"></canvas>
+  </div>
+  <p id="status" class="muted">Loading...</p>
+
+  <h2>Things to try</h2>
+  <ul>
+    <li><strong>Home:</strong> press <em>Feed now</em>, then press it again to see the cooldown refuse a second feed.</li>
+    <li><strong>Schedule:</strong> add a feeding time a minute or two from now and watch it appear in History.</li>
+    <li><strong>Network:</strong> scan and connect to a network. The simulated router accepts the password <code>fishfood</code>.</li>
+    <li><strong>Settings:</strong> switch to the light theme.</li>
+  </ul>
+  <p class="muted">Nothing is saved: reloading the page starts again. Firmware updates are not part of the demo.</p>
+</main>
+<script src="feeder_demo.js"></script>
+<script>
+(function () {
+  const canvas = document.getElementById("screen");
+  const status = document.getElementById("status");
+  const ctx = canvas.getContext("2d");
+  const W = 800, H = 480;
+  let image = null, t0 = 0;
+
+  function fail(text) { status.textContent = text; }
+
+  if (typeof Module === "undefined") {
+    fail("The demo files are missing from this copy of the site.");
+    return;
+  }
+  if (typeof WebAssembly !== "object") {
+    fail("This browser cannot run the demo (no WebAssembly).");
+    return;
+  }
+
+  function point(e) {
+    const r = canvas.getBoundingClientRect();
+    return [Math.round((e.clientX - r.left) * W / r.width), Math.round((e.clientY - r.top) * H / r.height)];
+  }
+  function pointer(e, down) {
+    const p = point(e);
+    Module._web_pointer(p[0], p[1], down ? 1 : 0);
+    e.preventDefault();
+  }
+  let held = false;
+
+  function frame(now) {
+    if (Module._web_frame(now - t0)) {
+      // The memory can move when it grows, so take a fresh view each time.
+      const at = Module._web_pixels();
+      image.data.set(Module.HEAPU8.subarray(at, at + W * H * 4));
+      ctx.putImageData(image, 0, 0);
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function start() {
+    const now = new Date();
+    // Local wall-clock time, as the controller keeps it.
+    Module._web_init(Math.floor(now.getTime() / 1000) - now.getTimezoneOffset() * 60);
+    image = ctx.createImageData(W, H);
+    canvas.addEventListener("pointerdown", e => { held = true; canvas.setPointerCapture(e.pointerId); pointer(e, true); });
+    canvas.addEventListener("pointermove", e => { if (held) pointer(e, true); });
+    canvas.addEventListener("pointerup", e => { held = false; pointer(e, false); });
+    canvas.addEventListener("pointercancel", e => { held = false; pointer(e, false); });
+    status.textContent = "Running. Two simulated feeders are paired.";
+    t0 = performance.now();
+    requestAnimationFrame(frame);
+  }
+
+  if (Module.calledRun) start(); else Module.onRuntimeInitialized = start;
+  window.addEventListener("error", () => fail("The demo stopped because of an error. Reload the page to restart it."));
+})();
+</script>
+</body>
+</html>

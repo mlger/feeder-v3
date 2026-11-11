@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIO-Feeder guide</title>
+<meta name="description" content="Wiring, first set-up, pairing and updating the AIO-Feeder controller and feeders.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site"><div class="in">
+  <a class="brand" href="index.html">AIO-Feeder</a>
+  <nav>
+    <a href="index.html">Install</a>
+    <a href="demo/">Demo</a>
+    <a href="guide.html" aria-current="page">Guide</a>
+    <a href="https://github.com/mlger/feeder-v3">Source</a>
+  </nav>
+</div></header>
+<main class="in">
+  <h1>Guide</h1>
+  <p class="lead">Build one feeder, pair it with the controller and set a schedule.</p>
+
+  <h2>Parts</h2>
+  <div class="scroll"><table>
+    <tr><th>Part</th><th>Notes</th></tr>
+    <tr><td>Waveshare ESP32-S3-Touch-LCD-4.3B</td><td>The controller. One for all tanks.</td></tr>
+    <tr><td>ESP8266 NodeMCU V3</td><td>One per tank.</td></tr>
+    <tr><td>DS3231 clock module with battery</td><td>Keeps the feeder's time through power cuts.</td></tr>
+    <tr><td>Relay module, active high</td><td>Rated for the solenoid's current.</td></tr>
+    <tr><td>12 V solenoid (JF-0530B) and 12 V supply</td><td>Drives the feeding mechanism.</td></tr>
+    <tr><td>1N4007 diode, 10 k&#8486; resistor</td><td>Protection parts, see below.</td></tr>
+  </table></div>
+
+  <h2>Feeder wiring</h2>
+  <div class="scroll"><table>
+    <tr><th>Connect</th><th>To NodeMCU pin</th><th>Notes</th></tr>
+    <tr><td>Relay IN</td><td>D5</td><td>Also fit the 10 k&#8486; resistor from D5 to GND.</td></tr>
+    <tr><td>DS3231 SDA</td><td>D2</td><td>Power the DS3231 from 3V3 and GND.</td></tr>
+    <tr><td>DS3231 SCL</td><td>D1</td><td></td></tr>
+    <tr><td>Relay VCC, GND</td><td>VIN (5 V), GND</td><td></td></tr>
+  </table></div>
+  <p style="margin-top:12px">The relay's contacts switch the solenoid's own 12 V supply. Fit the diode across the solenoid coil with its stripe towards +12 V.</p>
+  <p class="note">The resistor keeps the relay off while the board starts or is being flashed. The diode protects the relay contacts from the coil. Leave neither out. Check the solenoid's current against the relay and supply ratings.</p>
+
+  <h2>First set-up</h2>
+  <ol>
+    <li>Install the firmware on both boards from the <a href="index.html">install page</a>.</li>
+    <li>On the controller open <strong>Settings</strong> and set the date and time.</li>
+    <li>Open <strong>Feeders</strong>. Hold the feeder's FLASH button for 3 seconds; its light blinks fast and it appears under Discovered. Press <strong>Add</strong>.</li>
+    <li>Open <strong>Schedule</strong>, press <strong>Add feeding time</strong> and choose the time, days and portion.</li>
+    <li>On <strong>Home</strong> press <strong>Feed now</strong> to test the mechanism.</li>
+  </ol>
+  <p>A portion is a number of pulses and a pulse length. Start small and watch how much food one pulse drops.</p>
+
+  <h2>Feeder light</h2>
+  <div class="scroll"><table>
+    <tr><th>Pattern</th><th>Meaning</th></tr>
+    <tr><td>Fast blink</td><td>Pairing mode, waiting for a controller.</td></tr>
+    <tr><td>Slow blink</td><td>Paired but cannot hear the controller. The schedule still runs.</td></tr>
+    <tr><td>Double flash</td><td>Connected, but the clock is not set. Scheduled feeds wait.</td></tr>
+    <tr><td>Short flash every 2 seconds</td><td>Connected and healthy.</td></tr>
+    <tr><td>Solid</td><td>Feeding.</td></tr>
+  </table></div>
+
+  <h2>Safety limits</h2>
+  <ul>
+    <li>No pulse can be longer than 5 seconds, whatever the controller asks for.</li>
+    <li><strong>Cooldown:</strong> the shortest time between two feeds. It applies to scheduled feeds too, so keep feeding times further apart than the cooldown.</li>
+    <li><strong>Daily limit:</strong> the most relay-on time per day.</li>
+    <li>A feed missed while the feeder had no power is skipped, not run late.</li>
+  </ul>
+
+  <h2>Wi-Fi and internet time</h2>
+  <p>Wi-Fi is optional. On <strong>Network</strong> press <strong>Scan</strong>, pick your network and type the password. To take the time from the internet, set your UTC offset first, then switch on <strong>Internet time</strong>. There is no automatic daylight-saving change.</p>
+
+  <h2>Updating</h2>
+  <ol>
+    <li>Download the new <code>firmware.bin</code> files from the project's builds.</li>
+    <li>On the controller open <strong>Network</strong> and switch on <strong>Firmware updates</strong>.</li>
+    <li>In a browser on the same network open the address the controller shows.</li>
+    <li>Upload the controller file; the controller restarts.</li>
+    <li>Upload the feeder file, then press <strong>Update</strong> next to each feeder.</li>
+  </ol>
+  <p>A feeder is out of contact for about a minute while it updates and skips any feed due in that time. You can also reinstall either board from the <a href="index.html">install page</a> with a USB cable.</p>
+</main>
+</body>
+</html>

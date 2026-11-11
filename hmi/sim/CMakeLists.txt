@@ -1,6 +1,6 @@
-# Host build of the HMI application with a headless LVGL display.
-# It drives the real UI code against simulated feeders and writes screenshots,
-# so the XML screens can be checked without the board.
+# Host builds of the HMI application against simulated feeders:
+#  - feeder_sim: headless scripted test that also writes screenshots
+#  - feeder_demo: the same UI as WebAssembly for the project web site
 #
 #   cmake -S hmi/sim -B build/sim -DLVGL_DIR=/path/to/lvgl-9.4.0 && cmake --build build/sim
 #   build/sim/feeder_sim <output dir>
@@ -28,12 +28,26 @@ add_custom_command(OUTPUT ${XML_GEN}
     COMMAND ${Python3_EXECUTABLE} ${HMI}/tools/gen_ui_xml.py ${HMI}/ui ${XML_GEN}
     DEPENDS ${UI_XML} ${HMI}/tools/gen_ui_xml.py)
 
-add_executable(feeder_sim
-    sim_main.c
+set(APP_SRC
+    sim_world.c
     ${HMI}/lib/feeder_app/src/app.c
     ${HMI}/lib/feeder_app/src/ui.c
     ${CORE}/src/core.c
     ${XML_GEN})
-target_include_directories(feeder_sim PRIVATE ${HMI}/lib/feeder_app/include ${CORE}/include)
-target_compile_options(feeder_sim PRIVATE -Wall -Wextra)
-target_link_libraries(feeder_sim PRIVATE lvgl m)
+set(APP_INC ${HMI}/lib/feeder_app/include ${CORE}/include)
+
+if(EMSCRIPTEN)
+    # Browser demo: emcmake cmake -S hmi/sim -B build/web -DLVGL_DIR=... -DCMAKE_BUILD_TYPE=Release
+    # Produces feeder_demo.js and feeder_demo.wasm for web/demo/.
+    add_executable(feeder_demo web_main.c ${APP_SRC})
+    target_include_directories(feeder_demo PRIVATE ${APP_INC})
+    target_link_libraries(feeder_demo PRIVATE lvgl)
+    target_link_options(feeder_demo PRIVATE
+        -sALLOW_MEMORY_GROWTH=1
+        -sEXPORTED_FUNCTIONS=_main,_web_init,_web_frame,_web_pixels,_web_pointer)
+else()
+    add_executable(feeder_sim sim_main.c ${APP_SRC})
+    target_include_directories(feeder_sim PRIVATE ${APP_INC})
+    target_compile_options(feeder_sim PRIVATE -Wall -Wextra)
+    target_link_libraries(feeder_sim PRIVATE lvgl m)
+endif()
