@@ -39,7 +39,8 @@ static const char *TAG = "board";
 static i2c_master_bus_handle_t bus;
 static i2c_master_dev_handle_t dev_exio_mode, dev_exio_out, dev_touch, dev_rtc;
 static esp_lcd_panel_handle_t panel;
-static uint8_t exio = EXIO_TP_RST | EXIO_LCD_RST | EXIO_SD_CS; /* backlight off */
+/* Backlight off; SD chip-select held low (selected), see sdlog.c. */
+static uint8_t exio = EXIO_TP_RST | EXIO_LCD_RST;
 
 static esp_err_t add_dev(uint16_t addr, i2c_master_dev_handle_t *out)
 {

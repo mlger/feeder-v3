@@ -20,6 +20,7 @@
 #include "ui.h"
 
 #define W 800
+#define SETUP_TIMEOUT_TEST_MS (5 * 60000 + 2000)
 #define H 480
 
 /* ------------------------------------------------------------ display */
@@ -244,6 +245,45 @@ int main(int argc, char **argv)
     run(12000);
     CHECK(app_log_count() == 2, "history has both feeds");
     shot("13_history");
+
+    printf("SD card log\n");
+    CHECK(sd_lines == app_log_count(), "every history event was written to the SD card");
+    CHECK(strcmp(sd_last_header, "time,feeder,source,result,seconds,pulses") == 0, "CSV header is right");
+    CHECK(strncmp(sd_last_line, "2026-11-09 08:00:", 17) == 0 &&
+          strcmp(sd_last_line + 19, ",\"Tank 2\",manual,fed,1.0,1") == 0, "CSV line is as expected");
+    printf("    last line: %s\n", sd_last_line);
+    CHECK(strstr(lv_subject_get_string(lv_xml_get_subject(NULL, "log_summary")), "SD card: logging") != NULL,
+          "History shows that the SD card is logging");
+    sd_inserted = false;
+    run(1000);
+    CHECK(strstr(lv_subject_get_string(lv_xml_get_subject(NULL, "log_summary")), "No SD card") != NULL,
+          "History shows when the card is removed");
+    sd_inserted = true;
+    run(1000);
+
+    printf("Wi-Fi set-up from a phone\n");
+    ui_show_page(5);
+    run(500);
+    click("Use phone", 0);
+    CHECK(setup_ap_open, "set-up access point opens");
+    shot("14a_phone_setup");
+    click("Cancel", 0);
+    CHECK(!setup_ap_open, "Cancel closes the access point");
+    click("Use phone", 0);
+    run(2000);
+    plat_wifi_connect("HomeNetwork", "wrong"); /* the phone submits the form */
+    setup_done = true;
+    run(1000);
+    CHECK(setup_ap_open, "access point stays up briefly so the phone gets its answer");
+    run(4000);
+    CHECK(!setup_ap_open, "access point closes after the details were submitted");
+    CHECK(plat_wifi_state() == PLAT_WIFI_FAILED, "the submitted details were used");
+    click("Use phone", 0);
+    run(SETUP_TIMEOUT_TEST_MS);
+    CHECK(!setup_ap_open, "access point closes by itself after 5 minutes");
+    lv_display_trigger_activity(NULL);
+    plat_wifi_forget();
+    run(500);
 
     printf("Wi-Fi: wrong password, then the right one\n");
     fnodes[1].powered = true;

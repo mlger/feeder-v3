@@ -55,6 +55,22 @@ void plat_wifi_scan(void);
 /* -1 while a scan is running, otherwise the number of networks copied. */
 int  plat_wifi_scan_get(plat_ap_t *out, int max);
 
+/*
+ * Wi-Fi set-up from a phone: open a temporary access point whose web page
+ * asks for the network name and password. ssid and pass must each hold 24
+ * bytes. plat_wifi_setup_done() turns true once the page submitted them.
+ */
+bool plat_wifi_setup_begin(char *ssid, char *pass);
+void plat_wifi_setup_end(void);
+bool plat_wifi_setup_done(void);
+
+/* ---- SD card ---- */
+
+bool plat_sd_ready(void); /* a card is inserted and writable */
+/* Append one line to a file on the card; `header` starts a new file.
+ * Returns at once; the line is dropped if there is no card. */
+void plat_sd_append(const char *file, const char *header, const char *line);
+
 /* ---- firmware updates ---- */
 
 /* Allow or refuse firmware uploads on the built-in web page. */

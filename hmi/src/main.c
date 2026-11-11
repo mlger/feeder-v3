@@ -16,6 +16,7 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 #include "plat_esp.h"
+#include "sdlog.h"
 #include "ui.h"
 
 static const char *TAG = "main";
@@ -55,6 +56,7 @@ void app_main(void)
     ESP_LOGI(TAG, "AIO-Feeder HMI %s", APP_VERSION);
     ESP_ERROR_CHECK(board_init());
     ESP_ERROR_CHECK(plat_esp_init());
+    sdlog_init();
 
     lv_init();
     lv_tick_set_cb(tick_cb);

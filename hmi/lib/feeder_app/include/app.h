@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define APP_VERSION    "0.2.0"
+#define APP_VERSION    "0.3.0"
 #define APP_MAX_NODES  8
 #define APP_MAX_FOUND  4
 #define APP_LOG_SIZE   64
@@ -138,6 +138,10 @@ void                   app_log_clear(void);
 /* ---- settings ---- */
 app_settings_t *app_settings(void);
 void            app_settings_save(void);
+
+/* Every feed event is also appended to this file on the SD card. */
+#define APP_SD_LOG_FILE   "feedlog.csv"
+#define APP_SD_LOG_HEADER "time,feeder,source,result,seconds,pulses"
 
 /* Text for a feed result code. */
 const char *app_result_text(uint8_t result);

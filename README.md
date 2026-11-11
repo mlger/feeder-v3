@@ -105,7 +105,7 @@ tap **Add** when it appears. The HMI then sends it the time and its schedule.
 
 | Card | What it does |
 | --- | --- |
-| Wi-Fi | Scan, pick a network, type the password. The network is remembered. |
+| Wi-Fi | Scan, pick a network, type the password. The network is remembered. **Use phone** sets it up from a phone instead. |
 | Internet time | Set your UTC offset, then switch on. The clock then follows NTP (`pool.ntp.org`). |
 | Firmware updates | Unlocks uploads on the controller's web page for 10 minutes. |
 
@@ -138,8 +138,31 @@ the air for about a minute and skips any feed due in that time.
 The web page is plain HTTP on your local network and uploads only work while
 the switch on the controller is on.
 
-Not implemented yet: SD-card logging and a set-up access point for entering
-Wi-Fi details without the touchscreen.
+### Wi-Fi set-up from a phone
+
+Press **Use phone** on the Network page. The controller opens a temporary
+access point, `AIO-Feeder-Setup`, with a random 8-digit password, and shows
+both along with a QR code. Join it with a phone, open `http://192.168.4.1`,
+choose the home network and type its password. The access point closes once
+the details are sent, on **Cancel**, or after 5 minutes. It is never open
+unless someone starts it at the touchscreen.
+
+## SD card log
+
+With a FAT-formatted card in the controller's slot, every feed and every
+refused feed is appended to `feedlog.csv`:
+
+```
+time,feeder,source,result,seconds,pulses
+2026-11-09 08:00:00,"Goldfish",schedule 1,fed,1.0,1
+2026-11-09 08:01:12,"Tetras",manual,Skipped: cooldown,0.0,0
+```
+
+The History page shows whether a card is in use, and the update web page has
+a link to download the file. The card can be inserted or removed while the
+controller runs. Events that happen while no card is inserted are not written
+later; the on-screen history still keeps the last 64. The controller never
+formats a card.
 
 ## Web site
 

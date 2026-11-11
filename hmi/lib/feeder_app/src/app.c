@@ -244,6 +244,37 @@ static void reconcile(int idx)
 
 /* ---- log ---- */
 
+/* One CSV line per event on the SD card, which keeps the full history. */
+static void sd_log(const app_log_entry_t *e)
+{
+    char name[2 * FD_NAME_LEN + 3], line[160];
+    const app_node_cfg_t *n = app_node(e->node);
+    /* CSV quoting: wrap in quotes and double any quote inside. */
+    size_t k = 0;
+    name[k++] = '"';
+    for (const char *p = n ? n->name : "?"; *p && k < sizeof(name) - 3; p++) {
+        if (*p == '"') {
+            name[k++] = '"';
+        }
+        name[k++] = *p;
+    }
+    name[k++] = '"';
+    name[k] = '\0';
+
+    fd_civil_t c;
+    fd_civil_from_epoch(e->epoch, &c);
+    char source[16];
+    if (e->source == FD_SOURCE_MANUAL) {
+        snprintf(source, sizeof(source), "manual");
+    } else {
+        snprintf(source, sizeof(source), "schedule %u", e->source + 1);
+    }
+    snprintf(line, sizeof(line), "%04u-%02u-%02u %02u:%02u:%02u,%s,%s,%s,%u.%u,%u", c.year, c.month, c.day,
+             c.hour, c.minute, c.second, name, source, e->result == FD_RES_OK ? "fed" : app_result_text(e->result),
+             e->on_ms / 1000, e->on_ms % 1000 / 100, e->pulses);
+    plat_sd_append(APP_SD_LOG_FILE, APP_SD_LOG_HEADER, line);
+}
+
 static void log_add(int node, const fd_msg_feed_event_t *ev)
 {
     app_log_entry_t *e = &logbuf.e[logbuf.head];
@@ -258,6 +289,7 @@ static void log_add(int node, const fd_msg_feed_event_t *ev)
         logbuf.count++;
     }
     save_log();
+    sd_log(e);
     changes |= APP_CH_LOG;
 }
 

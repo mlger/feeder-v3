@@ -21,6 +21,8 @@ enum { PAGE_HOME, PAGE_SCHEDULE, PAGE_NODES, PAGE_HISTORY, PAGE_SETTINGS, PAGE_N
 
 #define UPDATES_WINDOW_MS (10u * 60u * 1000u)
 #define MAX_APS 8
+#define SETUP_WINDOW_MS (5u * 60u * 1000u)
+#define SETUP_LINGER_MS 3000u /* let the phone receive its answer */
 
 /* ------------------------------------------------------------ subjects */
 
@@ -32,6 +34,7 @@ static lv_subject_t s_ed_hour, s_ed_min, s_ed_on, s_ed_pulses, s_ed_on_txt, s_ed
 static lv_subject_t s_ed_day[7];
 static lv_subject_t s_set_year, s_set_month, s_set_day, s_set_hour, s_set_min;
 static lv_subject_t s_feed_on, s_feed_pulses, s_feed_on_txt, s_sleep_min, s_sleep_txt;
+static lv_subject_t s_setup_text;
 static lv_subject_t s_wifi_status, s_ntp_on, s_ntp_status, s_utc_off, s_utc_txt, s_ota_allow, s_ota_status;
 
 #define STR_SUBJECT(subj, name, len, init)                                      \
@@ -67,6 +70,9 @@ static int  ap_count;
 static bool scanning;
 static char wifi_pick[33];
 static uint32_t updates_since_ms; /* when uploads were allowed; 0 = not allowed */
+static lv_obj_t *setup_modal;     /* the phone set-up dialog while its access point is open */
+static uint32_t setup_since_ms, setup_done_ms;
+static bool sd_was_ready;
 static uint32_t last_minute;
 static bool backlight_on = true;
 
@@ -405,8 +411,10 @@ static void refresh_history(void)
 {
     lv_obj_clean(hist_list);
     int count = app_log_count();
-    char sum[40];
-    snprintf(sum, sizeof(sum), count ? "Last %d events, newest first" : "No feeds recorded yet", count);
+    char sum[96];
+    int len = snprintf(sum, sizeof(sum), count ? "Last %d events, newest first" : "No feeds recorded yet", count);
+    snprintf(sum + len, sizeof(sum) - (size_t)len, "%s",
+             plat_sd_ready() ? ".  SD card: logging to " APP_SD_LOG_FILE : ".  No SD card");
     lv_subject_copy_string(&s_log_summary, sum);
 
     for (int i = 0; i < count; i++) {
@@ -807,8 +815,80 @@ static void refresh_wifi_list(void)
     }
 }
 
+/* Close the phone set-up access point and its dialog. */
+static void setup_stop(void)
+{
+    if (!setup_modal) {
+        return;
+    }
+    plat_wifi_setup_end();
+    if (modal == setup_modal) {
+        modal_close();
+    }
+    setup_modal = NULL;
+}
+
+static void setup_tick(void)
+{
+    if (!setup_modal) {
+        return;
+    }
+    uint32_t ms = plat_millis();
+    if (modal != setup_modal) {
+        setup_stop(); /* another dialog replaced it */
+    } else if (plat_wifi_setup_done()) {
+        if (setup_done_ms == 0) {
+            setup_done_ms = ms ? ms : 1;
+        } else if (ms - setup_done_ms >= SETUP_LINGER_MS) {
+            setup_stop();
+        }
+    } else if (ms - setup_since_ms >= SETUP_WINDOW_MS) {
+        setup_stop();
+    }
+}
+
+static void on_wifi_phone(lv_event_t *e)
+{
+    (void)e;
+    char ssid[24], pass[24], text[200];
+    if (app_ota_state() == APP_OTA_RUNNING) {
+        dialog_open(DLG_NONE, 0, "Busy", "A feeder update is running. Try again when it has finished.", NULL);
+        return;
+    }
+    if (!plat_wifi_setup_begin(ssid, pass)) {
+        dialog_open(DLG_NONE, 0, "Not available", "The set-up access point could not be opened.", NULL);
+        return;
+    }
+    snprintf(text, sizeof(text),
+             "1. Scan the code, or join the Wi-Fi network\n    %s\n    password  %s\n"
+             "2. Open  http://192.168.4.1  in the phone's browser.",
+             ssid, pass);
+    lv_subject_copy_string(&s_setup_text, text);
+
+    modal_close();
+    modal = setup_modal = lv_xml_create(lv_layer_top(), "setup_dialog", NULL);
+    /* The standard Wi-Fi QR format; phone cameras offer to join. */
+    char qr[96];
+    int n = snprintf(qr, sizeof(qr), "WIFI:T:WPA;S:%s;P:%s;;", ssid, pass);
+    lv_qrcode_update(lv_obj_find_by_name(modal, "setup_qr"), qr, (uint32_t)n);
+    setup_since_ms = plat_millis();
+    setup_done_ms = 0;
+}
+
+static void on_setup_cancel(lv_event_t *e)
+{
+    (void)e;
+    setup_stop();
+}
+
 static void refresh_network(void)
 {
+    setup_tick();
+    if (plat_sd_ready() != sd_was_ready) {
+        sd_was_ready = plat_sd_ready();
+        refresh_history();
+    }
+
     char ssid[33], ip[20], buf[128];
     plat_wifi_info(ssid, sizeof(ssid), ip, sizeof(ip));
     plat_wifi_state_t ws = plat_wifi_state();
@@ -1114,7 +1194,8 @@ static void register_xml(void)
     static const char *const order[] = {
         "globals", "row", "col", "nav_button", "stepper", "tank_card", "sched_row", "node_row",
         "found_row", "hist_row", "page_home", "page_schedule", "page_nodes", "page_history",
-        "page_settings", "wifi_row", "page_network", "sched_editor", "dialog", "text_dialog", "main",
+        "page_settings", "wifi_row", "page_network", "sched_editor", "dialog", "text_dialog",
+        "setup_dialog", "main",
     };
     for (size_t i = 0; i < sizeof(order) / sizeof(order[0]); i++) {
         const char *xml = ui_xml_get(order[i]);
@@ -1142,7 +1223,7 @@ void ui_init(void)
     STR_SUBJECT(s_clock, "clock", 8, "--:--");
     STR_SUBJECT(s_date, "date", 16, "");
     STR_SUBJECT(s_alert, "alert", 64, "");
-    STR_SUBJECT(s_log_summary, "log_summary", 40, "");
+    STR_SUBJECT(s_log_summary, "log_summary", 96, "");
     STR_SUBJECT(s_about, "about", 64, "AIO-Feeder controller " APP_VERSION);
 
     INT_SUBJECT(s_lim_cool, "lim_cool", 10);
@@ -1183,6 +1264,9 @@ void ui_init(void)
     INT_SUBJECT(s_ota_allow, "ota_allow", 0);
     STR_SUBJECT(s_ota_status, "ota_status", 128, "");
 
+    STR_SUBJECT(s_setup_text, "setup_text", 200, "");
+    lv_xml_register_event_cb(NULL, "on_wifi_phone", on_wifi_phone);
+    lv_xml_register_event_cb(NULL, "on_setup_cancel", on_setup_cancel);
     lv_xml_register_event_cb(NULL, "on_wifi_scan", on_wifi_scan);
     lv_xml_register_event_cb(NULL, "on_wifi_forget", on_wifi_forget);
     lv_xml_register_event_cb(NULL, "on_wifi_pick", on_wifi_pick);

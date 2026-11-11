@@ -325,6 +325,38 @@ void plat_send(const uint8_t mac[6], const void *msg, uint8_t len)
 }
 
 
+/* Phone set-up access point and SD card. */
+bool setup_ap_open, setup_done;
+bool sd_inserted = true;
+int sd_lines;
+char sd_last_line[200], sd_last_header[80];
+
+bool plat_wifi_setup_begin(char *ssid, char *pass)
+{
+    if (ota_ap_open) {
+        return false;
+    }
+    strcpy(ssid, "AIO-Feeder-Setup");
+    strcpy(pass, "48151623");
+    setup_ap_open = true;
+    setup_done = false;
+    return true;
+}
+void plat_wifi_setup_end(void) { setup_ap_open = false; }
+bool plat_wifi_setup_done(void) { return setup_done; }
+
+bool plat_sd_ready(void) { return sd_inserted; }
+void plat_sd_append(const char *file, const char *header, const char *line)
+{
+    (void)file;
+    if (!sd_inserted) {
+        return;
+    }
+    snprintf(sd_last_header, sizeof(sd_last_header), "%s", header);
+    snprintf(sd_last_line, sizeof(sd_last_line), "%s", line);
+    sd_lines++;
+}
+
 void sim_world_step(uint32_t ms)
 {
     static frame_t batch[32];

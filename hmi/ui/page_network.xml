@@ -17,6 +17,10 @@
           <lv_label text="Scan" align="center"/>
         </lv_button>
         <lv_button height="44">
+          <event_cb callback="on_wifi_phone" trigger="clicked"/>
+          <lv_label text="Use phone" align="center"/>
+        </lv_button>
+        <lv_button height="44">
           <style name="quiet"/>
           <event_cb callback="on_wifi_forget" trigger="clicked"/>
           <lv_label text="Forget" align="center"/>

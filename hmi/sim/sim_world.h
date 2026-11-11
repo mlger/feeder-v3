@@ -50,6 +50,10 @@ extern bool backlight;
 extern uint32_t node_fw_size;
 extern int node_ota_request;
 extern bool ota_ap_open, ota_served;
+extern bool setup_ap_open, setup_done;
+extern bool sd_inserted;
+extern int sd_lines;
+extern char sd_last_line[200], sd_last_header[80];
 
 /* Advance the world to `ms` (virtual milliseconds): run the fake feeders and
  * network and hand any frames they sent to the application. */
