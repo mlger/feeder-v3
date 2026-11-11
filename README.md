@@ -165,6 +165,34 @@ controller runs. Events that happen while no card is inserted are not written
 later; the on-screen history still keeps the last 64. The controller never
 formats a card.
 
+## Versions and releases
+
+The version is written once, in `VERSION` at the repository root. Both
+firmwares, the simulator and the web site take it from there.
+
+To publish a release, set `VERSION`, commit, and push a matching tag:
+
+```bash
+git tag v$(cat VERSION) && git push origin v$(cat VERSION)
+```
+
+CI then attaches the controller and feeder firmware files to a GitHub
+Release. Those are the files to upload on the controller's update page.
+
+## Security notes
+
+This is built for a home network, and its protections are physical:
+
+- The controller's web page is plain HTTP with no login. Firmware uploads
+  only work for 10 minutes after someone switches them on at the
+  touchscreen.
+- The two temporary access points (phone set-up, feeder update) use a fresh
+  random password each time and exist only while they are needed.
+- ESP-NOW traffic between controller and feeders is not encrypted. A feeder
+  only obeys the controller it was paired with, pairing needs its button,
+  and its hard limits, cooldown and daily cap bound what any command can do.
+- Do not expose the controller to the internet.
+
 ## Web site
 
 The site in `web/` has three pages: an install page that flashes either

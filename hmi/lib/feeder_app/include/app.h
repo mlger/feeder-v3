@@ -16,7 +16,10 @@
 extern "C" {
 #endif
 
-#define APP_VERSION    "0.3.0"
+/* Normally set by the build from the repository's VERSION file. */
+#ifndef APP_VERSION
+#define APP_VERSION    "dev"
+#endif
 #define APP_MAX_NODES  8
 #define APP_MAX_FOUND  4
 #define APP_LOG_SIZE   64

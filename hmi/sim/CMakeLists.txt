@@ -28,6 +28,9 @@ add_custom_command(OUTPUT ${XML_GEN}
     COMMAND ${Python3_EXECUTABLE} ${HMI}/tools/gen_ui_xml.py ${HMI}/ui ${XML_GEN}
     DEPENDS ${UI_XML} ${HMI}/tools/gen_ui_xml.py)
 
+file(STRINGS ${HMI}/../VERSION APP_VERSION LIMIT_COUNT 1)
+add_compile_definitions(APP_VERSION="${APP_VERSION}")
+
 set(APP_SRC
     sim_world.c
     ${HMI}/lib/feeder_app/src/app.c
