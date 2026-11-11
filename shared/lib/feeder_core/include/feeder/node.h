@@ -24,6 +24,8 @@ extern "C" {
 #define FD_NODE_EVENT_RETRY_MS   2000u   /* resend un-ACKed feed events */
 #define FD_NODE_PAIR_WINDOW_MS   120000u /* pairing mode timeout if already paired */
 #define FD_NODE_FAILSAFE_MARGIN_MS 500u
+#define FD_NODE_SETTLE_MS         1500u  /* let the hopper stop shaking before weighing */
+#define FD_NODE_WEIGH_TIMEOUT_MS  6000u  /* give up weighing if it never settles */
 #define FD_NODE_CHANNEL_MAX      13
 #define FD_NODE_EVENT_QUEUE      16
 
@@ -44,6 +46,8 @@ typedef struct {
 typedef struct {
     fd_guard_t guard;
     uint32_t   last_sched_minute; /* epoch/60 of the last scheduled feed handled */
+    uint32_t   fed_mg_day;        /* epoch/86400 that fed_mg_today belongs to */
+    uint32_t   fed_mg_today;      /* weighed food given that day */
 } fd_node_state_t;
 
 /* The hardware, as seen by the state machine. */
@@ -60,6 +64,15 @@ typedef struct {
     void (*arm_failsafe)(void *ctx, uint32_t ms);
     /* Fetch new firmware. On real hardware this does not return. */
     void (*ota)(void *ctx, const fd_msg_ota_start_t *m);
+
+    /* Optional scale under the hopper; all three may be NULL. */
+    /* True if a load-cell amplifier is answering at all. */
+    bool (*scale_found)(void *ctx);
+    /* The weight of food in the hopper. False if the scale is missing, not
+     * set up, or the reading is not steady right now. */
+    bool (*scale_read)(void *ctx, int32_t *mg);
+    /* FD_SCALE_ZERO / FD_SCALE_SPAN. False if it could not be done. */
+    bool (*scale_set)(void *ctx, uint8_t op, uint32_t known_mg);
 } fd_node_io_t;
 
 typedef enum {
@@ -81,6 +94,17 @@ typedef struct {
     fd_pulse_t   pulse;
     uint8_t      feed_source;
     volatile bool failsafe_fired;
+
+    /* weighing a finished feed: the event is held back until it is done */
+    bool        weighing;
+    bool        have_before;
+    int32_t     before_mg;
+    uint32_t    weigh_since_ms;
+    fd_result_t weigh_result;
+    uint8_t     weigh_pulses;
+    uint32_t    weigh_on_ms;
+    bool        scale_ok;       /* a good reading has been seen since the scale was set up */
+    int32_t     last_hopper_mg;
 
     /* events waiting for the HMI's ACK */
     fd_msg_feed_event_t events[FD_NODE_EVENT_QUEUE];

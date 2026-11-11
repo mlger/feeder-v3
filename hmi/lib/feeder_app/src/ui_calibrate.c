@@ -15,6 +15,8 @@
 enum { STEP_SETUP, STEP_WAIT, STEP_WEIGH };
 
 static lv_subject_t s_step, s_on, s_on_txt, s_grams, s_grams_txt, s_title, s_text;
+static lv_subject_t s_has_scale, s_scale_text, s_scale_reading, s_scale_known, s_scale_known_txt;
+static bool scale_open; /* the open dialog is the scale one */
 static int cal_node = -1;
 static lv_obj_t *cal_modal;
 
@@ -27,6 +29,7 @@ static void close_dialog(void)
     }
     cal_modal = NULL;
     cal_node = -1;
+    scale_open = false;
 }
 
 static void show_setup(void)
@@ -58,6 +61,8 @@ void ui_calibrate_open(int idx)
     cal_node = idx;
     lv_subject_set_int(&s_on, app_feed_on_ds(idx));
     lv_subject_set_int(&s_grams, 0);
+    lv_subject_set_int(&s_has_scale, app_scale_found(idx) ? 1 : 0);
+    scale_open = false;
     show_setup();
 
     ui_modal_close();
@@ -112,6 +117,94 @@ static void on_cal_save(lv_event_t *e)
     close_dialog();
 }
 
+/* ---- scale set-up ---- */
+
+static const char SCALE_HELP[] =
+    "This feeder has a scale under its hopper. Set it up once:\n"
+    "1. Empty the hopper and press Zero.\n"
+    "2. Put a known weight in the hopper, choose it below and press Set weight.";
+
+static void show_reading(void)
+{
+    char buf[48];
+    if (app_has_scale(cal_node)) {
+        char g[16];
+        int32_t mg = app_hopper_mg(cal_node);
+        ui_fmt_grams(g, sizeof(g), mg > 0 ? (uint32_t)mg : 0);
+        snprintf(buf, sizeof(buf), "Reading: %s%s", mg < 0 ? "-" : "", g);
+    } else {
+        snprintf(buf, sizeof(buf), "Not set up yet");
+    }
+    if (strcmp(lv_subject_get_string(&s_scale_reading), buf) != 0) {
+        lv_subject_copy_string(&s_scale_reading, buf);
+    }
+}
+
+void ui_calibrate_tick(void)
+{
+    if (active() && scale_open) {
+        show_reading();
+    }
+}
+
+static void on_cal_scale(lv_event_t *e)
+{
+    (void)e;
+    int idx = cal_node;
+    lv_subject_copy_string(&s_scale_text, SCALE_HELP);
+    ui_modal_close();
+    ui_modal = cal_modal = lv_xml_create(lv_layer_top(), "scale_dialog", NULL);
+    cal_node = idx;
+    scale_open = true;
+    show_reading();
+}
+
+static void scale_send(uint8_t op, uint32_t known_mg)
+{
+    if (!app_scale_set(cal_node, op, known_mg)) {
+        lv_subject_copy_string(&s_scale_text, "Another request is still in progress. Try again in a moment.");
+    } else {
+        lv_subject_copy_string(&s_scale_text, "Asking the feeder...");
+    }
+}
+
+static void on_scale_zero(lv_event_t *e)
+{
+    (void)e;
+    scale_send(FD_SCALE_ZERO, 0);
+}
+
+static void on_scale_span(lv_event_t *e)
+{
+    (void)e;
+    scale_send(FD_SCALE_SPAN, (uint32_t)lv_subject_get_int(&s_scale_known) * 1000u);
+}
+
+void ui_scale_result(int idx, uint8_t result)
+{
+    if (!active() || !scale_open || idx != cal_node) {
+        return;
+    }
+    if (result == FD_RES_OK) {
+        lv_subject_copy_string(&s_scale_text, "Done. The reading below updates in a few seconds.\n"
+                                              "After Zero, put the known weight in and press Set weight.");
+    } else if (result == APP_FEED_NO_REPLY) {
+        lv_subject_copy_string(&s_scale_text, "No reply from the feeder. Nothing was changed.");
+    } else {
+        lv_subject_copy_string(&s_scale_text,
+                               "The feeder could not do that. Keep the hopper still, press Zero before "
+                               "Set weight, and use a weight of at least 5 g.");
+    }
+}
+
+static void on_scale_known_changed(lv_observer_t *o, lv_subject_t *s)
+{
+    (void)o;
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%d g", (int)lv_subject_get_int(s));
+    lv_subject_copy_string(&s_scale_known_txt, buf);
+}
+
 static void on_on_changed(lv_observer_t *o, lv_subject_t *s)
 {
     (void)o;
@@ -139,6 +232,16 @@ void ui_calibrate_register(void)
     STR_SUBJECT(s_text, "cal_text", 220, "");
     lv_subject_add_observer(&s_on, on_on_changed, NULL);
     lv_subject_add_observer(&s_grams, on_grams_changed, NULL);
+
+    INT_SUBJECT(s_has_scale, "cal_scale", 0);
+    STR_SUBJECT(s_scale_text, "scale_text", 240, "");
+    STR_SUBJECT(s_scale_reading, "scale_reading", 48, "");
+    INT_SUBJECT(s_scale_known, "scale_known", 100);
+    STR_SUBJECT(s_scale_known_txt, "scale_known_txt", 16, "");
+    lv_subject_add_observer(&s_scale_known, on_scale_known_changed, NULL);
+    lv_xml_register_event_cb(NULL, "on_cal_scale", on_cal_scale);
+    lv_xml_register_event_cb(NULL, "on_scale_zero", on_scale_zero);
+    lv_xml_register_event_cb(NULL, "on_scale_span", on_scale_span);
 
     lv_xml_register_event_cb(NULL, "on_cal_cancel", on_cal_cancel);
     lv_xml_register_event_cb(NULL, "on_cal_run", on_cal_run);

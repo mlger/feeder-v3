@@ -90,11 +90,17 @@ void ui_dialog_open(dlg_action_t action, int arg, const char *title, const char 
 static void refresh_alert(void)
 {
     char buf[64] = "";
-    int offline = 0, noclock = 0;
+    int offline = 0, noclock = 0, jam = -1, low = -1;
     for (int i = 0; i < APP_MAX_NODES; i++) {
         const app_node_rt_t *r = app_node_rt(i);
         if (!r) {
             continue;
+        }
+        if (r->low_output && jam < 0) {
+            jam = i;
+        }
+        if (app_has_scale(i) && app_hopper_mg(i) < APP_LOW_FOOD_MG && low < 0) {
+            low = i;
         }
         if (!app_node_online(i)) {
             offline++;
@@ -109,6 +115,11 @@ static void refresh_alert(void)
     } else if (noclock) {
         snprintf(buf, sizeof(buf), LV_SYMBOL_WARNING " %d feeder%s without a clock", noclock,
                  noclock > 1 ? "s have" : " has");
+    } else if (jam >= 0) {
+        /* The scale saw far less leave the hopper than the feed should give. */
+        snprintf(buf, sizeof(buf), LV_SYMBOL_WARNING " %s: little food came out", app_node(jam)->name);
+    } else if (low >= 0) {
+        snprintf(buf, sizeof(buf), LV_SYMBOL_WARNING " %s: food is low", app_node(low)->name);
     }
     lv_subject_copy_string(&s_alert, buf);
 }
@@ -157,7 +168,11 @@ static void refresh_home(void)
             /* In grams when calibrated; this assumes today's feeds used the
              * calibrated pulse length, hence "about". */
             char amount[24];
-            if (app_calibrated(i)) {
+            if (app_has_scale(i)) {
+                char g[16];
+                ui_fmt_grams(g, sizeof(g), r->status.fed_mg_today);
+                snprintf(amount, sizeof(amount), "%s weighed", g);
+            } else if (app_calibrated(i)) {
                 char g[16];
                 ui_fmt_grams(g, sizeof(g), r->status.on_ms_today / (n->cal_on_ds * 100u) * n->mg_per_pulse);
                 snprintf(amount, sizeof(amount), "about %s", g);
@@ -179,11 +194,22 @@ static void refresh_home(void)
             snprintf(next, sizeof(next), n->count ? "Next: nothing scheduled" : "Next: no schedule");
         }
 
+        /* Only a feeder with a scale knows how much food is left. */
+        char food[40] = "";
+        if (app_has_scale(i)) {
+            char g[16];
+            int32_t left = app_hopper_mg(i);
+            ui_fmt_grams(g, sizeof(g), left > 0 ? (uint32_t)left : 0);
+            snprintf(food, sizeof(food), "Food left: %s", g);
+        }
         const char *attrs[] = {
             "name", n->name, "state", state, "state_color", color,
-            "last", last, "next", next, "today", today, NULL, NULL,
+            "last", last, "next", next, "today", today, "food", food, NULL, NULL,
         };
         lv_obj_t *card = lv_xml_create(home_list, "tank_card", attrs);
+        if (!food[0]) {
+            lv_obj_add_flag(lv_obj_find_by_name(card, "food"), LV_OBJ_FLAG_HIDDEN);
+        }
         ui_row_set_index(card, i);
     }
 }
@@ -277,12 +303,15 @@ void ui_history_refresh(void)
         if (e->result == FD_RES_OK) {
             char amount[32];
             uint32_t mg = e->pulses ? app_mg(e->node, (uint8_t)(e->on_ms / e->pulses / 100u), e->pulses) : 0;
-            if (mg) {
+            if (e->measured_mg != FD_NOT_MEASURED) {
+                ui_fmt_grams(amount, sizeof(amount), e->measured_mg);
+                snprintf(result, sizeof(result), "Fed %s, weighed", amount);
+            } else if (mg) {
                 ui_fmt_grams(amount, sizeof(amount), mg);
+                snprintf(result, sizeof(result), "Fed about %s", amount);
             } else {
-                snprintf(amount, sizeof(amount), "%u.%u s", e->on_ms / 1000, e->on_ms % 1000 / 100);
+                snprintf(result, sizeof(result), "Fed %u.%u s", e->on_ms / 1000, e->on_ms % 1000 / 100);
             }
-            snprintf(result, sizeof(result), "Fed %s", amount);
         } else {
             snprintf(result, sizeof(result), "%s", app_result_text(e->result));
         }
@@ -578,6 +607,10 @@ static void ui_tick(lv_timer_t *t)
                  res == FD_RES_OK ? "feeding started" : app_result_text(res));
         ui_dialog_open(DLG_NONE, 0, res == FD_RES_OK ? "Feeding" : "Not fed", text, NULL);
     }
+    if (ch & APP_CH_SCALE) {
+        ui_scale_result(app_scale_last_node(), app_scale_last_result());
+    }
+    ui_calibrate_tick();
     if (ch & APP_CH_OTA) {
         const app_node_cfg_t *n = app_node(app_ota_node());
         char text[96];
@@ -608,6 +641,7 @@ static void register_xml(void)
         "globals", "row", "col", "nav_button", "stepper", "tank_card", "sched_row", "node_row",
         "found_row", "hist_row", "page_home", "page_schedule", "page_nodes", "page_history",
         "page_settings", "wifi_row", "page_network", "sched_editor", "dialog", "text_dialog", "cal_dialog",
+        "scale_dialog",
         "setup_dialog", "main",
     };
     for (size_t i = 0; i < sizeof(order) / sizeof(order[0]); i++) {

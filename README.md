@@ -120,6 +120,27 @@ Home, History, the daily limit and the SD-card log).
 - The conversion lives on the controller only. Feeders still receive pulses,
   so their hard limits work exactly as before.
 
+### Optional scale under the hopper
+
+A feeder can carry a load cell (HX711 on D6/D7) under its food hopper. It is
+detected by itself; feeders without one behave exactly as before.
+
+- Each feed is weighed as what the hopper lost, and History and the SD log
+  record it as `weighed` instead of `estimated`.
+- The Home card shows the food left and the weighed total for the day.
+- Alerts: food low (under 20 g), and "little food came out" when a feed gives
+  less than a quarter of what was expected (a jam or an empty hopper).
+- Weighed feeds keep the grams-per-pulse estimate up to date, so a feeder
+  with a scale needs no manual calibration.
+- Set-up: **Feeders > Calibrate > Scale**, then **Zero** with the hopper
+  empty and **Set weight** with a known weight in it.
+
+The scale measures only. Feeds are still a fixed number of pulses; the
+feeder does not keep pulsing until a target weight is reached.
+
+Controller and feeders must run the same version from 0.6.0 on: the
+messages between them changed to carry the weights.
+
 ### Network page
 
 | Card | What it does |
@@ -172,9 +193,9 @@ With a FAT-formatted card in the controller's slot, every feed and every
 refused feed is appended to `feedlog.csv`:
 
 ```
-time,feeder,source,result,seconds,pulses,grams
-2026-11-09 08:00:00,"Goldfish",schedule 1,fed,1.0,1,0.6
-2026-11-09 08:01:12,"Tetras",manual,Skipped: cooldown,0.0,0,
+time,feeder,source,result,seconds,pulses,grams,grams_are
+2026-11-09 08:00:00,"Goldfish",schedule 1,fed,1.0,1,0.6,weighed
+2026-11-09 08:01:12,"Tetras",manual,Skipped: cooldown,0.0,0,,
 ```
 
 The History page shows whether a card is in use, and the update web page has
@@ -248,6 +269,8 @@ python3 -m http.server -d _site 8000
 | Relay IN (active high) | D5 / GPIO14 | Add a 10 k pull-down to GND so the relay stays off during reset |
 | DS3231 SDA | D2 / GPIO4 | DS3231 powered from 3V3 |
 | DS3231 SCL | D1 / GPIO5 | |
+| HX711 DT (optional scale) | D6 / GPIO12 | Load cell under the hopper |
+| HX711 SCK (optional scale) | D7 / GPIO13 | |
 | Pair button | FLASH / GPIO0 | Hold 3 s to enter pairing mode |
 | Status LED | on-board / GPIO2 | See below |
 

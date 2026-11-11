@@ -63,6 +63,21 @@
   <p>From then on that feeder's portions, daily total, history and SD-card log are in grams. Portions go in steps of one pulse, so with 0.6 g per pulse you can choose 0.6 g, 1.2 g, 1.8 g and so on.</p>
   <p class="note">The grams are an estimate. Calibrate again when you change food, and check now and then: pellet size, humidity and how full the hopper is all change what one pulse drops. The calibration run is a normal feed, so the cooldown and daily limit apply to it. Entering 0 removes the calibration.</p>
 
+  <h2>Optional: a scale under the hopper</h2>
+  <p>With a load cell under the food hopper the feeder weighs what each feed really gave, shows how much food is left, and warns when food runs low or a feed drops next to nothing. Feeders without one keep working from the calibration above.</p>
+  <div class="scroll"><table>
+    <tr><th>Connect</th><th>To NodeMCU pin</th><th>Notes</th></tr>
+    <tr><td>HX711 DT</td><td>D6</td><td>A bar-type load cell of about 1 kg on an HX711 board.</td></tr>
+    <tr><td>HX711 SCK</td><td>D7</td><td></td></tr>
+    <tr><td>HX711 VCC, GND</td><td>3V3, GND</td><td></td></tr>
+  </table></div>
+  <p style="margin-top:12px">Mount the hopper so that all of its weight rests on the load cell and nothing else touches it. Then on the controller open <strong>Feeders</strong>, press <strong>Calibrate</strong> and <strong>Scale</strong>:</p>
+  <ol>
+    <li>Empty the hopper and press <strong>Zero</strong>.</li>
+    <li>Put a known weight in the hopper (100 g works well), choose it and press <strong>Set weight</strong>.</li>
+  </ol>
+  <p class="note">A feed is measured as the weight the hopper lost, read about two seconds after the feeder stops. A hopper that is bumped or still swinging at that moment gives no reading for that feed. The scale measures; it does not change how much is fed.</p>
+
   <h2>Feeder light</h2>
   <div class="scroll"><table>
     <tr><th>Pattern</th><th>Meaning</th></tr>

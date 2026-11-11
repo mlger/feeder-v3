@@ -26,6 +26,12 @@ typedef struct {
     bool     flash_valid;   /* flash contents, kept across reboots */
     fd_node_cfg_t   flash_cfg;
     fd_node_state_t flash_state;
+    /* Optional scale under the hopper. */
+    bool     scale_fitted;  /* a load cell is connected */
+    bool     scale_zeroed, scale_ready;
+    int32_t  hopper_mg;     /* what is really in the hopper */
+    int32_t  true_mg_per_pulse;
+    bool     jam;           /* the mechanism moves but no food falls */
     uint32_t ota_until_ms;  /* downloading firmware until then, 0 = not */
     bool     ota_broken;    /* this feeder fails to download */
     fd_node_t n;            /* the real node state machine */

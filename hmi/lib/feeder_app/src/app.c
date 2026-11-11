@@ -51,6 +51,14 @@ static struct {
     int      last_node;
 } feed = { .last_node = -1 };
 
+static struct {
+    bool               active;
+    int                node, last_node;
+    uint8_t            tries, result;
+    uint32_t           last_ms;
+    fd_msg_scale_set_t msg;
+} scale = { .last_node = -1 };
+
 #define OTA_TIMEOUT_MS  150000u
 #define OTA_RETRY_MS    1000u
 #define OTA_START_TRIES 8
@@ -69,6 +77,7 @@ static void save_nodes(void) { plat_save("nodes", &nodes, sizeof(nodes)); }
 static void save_log(void) { plat_save("log", &logbuf, sizeof(logbuf)); }
 
 static void ota_finish(app_ota_state_t state, const char *text);
+static void learn_from_weighing(int idx, const fd_msg_feed_event_t *ev);
 static void ota_on_status(int idx, const fd_msg_status_t *st);
 
 /* ---- init ---- */
@@ -246,6 +255,41 @@ static void reconcile(int idx)
 
 /* ---- log ---- */
 
+/*
+ * A weighed feed tells us what a pulse really drops. Use it to keep the
+ * grams-per-pulse estimate honest (it is what portions are planned with),
+ * and to notice a feed that gave next to nothing: a jam or an empty hopper.
+ */
+static void learn_from_weighing(int idx, const fd_msg_feed_event_t *ev)
+{
+    app_node_cfg_t *n = app_node(idx);
+    if (!n || ev->result != FD_RES_OK || ev->measured_mg == FD_NOT_MEASURED || ev->pulses_done == 0) {
+        return;
+    }
+    uint8_t on_ds = (uint8_t)(ev->on_ms_total / ev->pulses_done / 100u);
+    uint32_t per = ev->measured_mg / ev->pulses_done;
+    uint32_t expected = app_mg(idx, on_ds, ev->pulses_done);
+
+    bool low = expected >= 300u && ev->measured_mg * 4u < expected;
+    if (low != rt[idx].low_output) {
+        rt[idx].low_output = low;
+        changes |= APP_CH_NODES;
+    }
+    if (low || per == 0 || per > 0xFFFFu) {
+        return; /* do not learn from a jam */
+    }
+    if (!app_calibrated(idx)) {
+        n->mg_per_pulse = (uint16_t)per; /* the scale calibrates the feeder by itself */
+        n->cal_on_ds = on_ds;
+    } else if (on_ds == n->cal_on_ds) {
+        n->mg_per_pulse = (uint16_t)((3u * n->mg_per_pulse + per + 2u) / 4u); /* move a quarter of the way */
+    } else {
+        return;
+    }
+    save_nodes();
+    changes |= APP_CH_NODES | APP_CH_SCHEDULE;
+}
+
 /* One CSV line per event on the SD card, which keeps the full history. */
 static void sd_log(const app_log_entry_t *e)
 {
@@ -271,16 +315,25 @@ static void sd_log(const app_log_entry_t *e)
     } else {
         snprintf(source, sizeof(source), "schedule %u", e->source + 1);
     }
-    /* Grams only when the feed used the calibrated pulse length. */
+    /* Weighed grams when the feeder has a scale; otherwise the estimate,
+     * which exists only for the calibrated pulse length. */
     char grams[12] = "";
-    uint32_t mg = e->pulses ? app_mg(e->node, (uint8_t)(e->on_ms / e->pulses / 100u), e->pulses) : 0;
-    if (mg) {
+    const char *kind = "";
+    uint32_t mg = 0;
+    if (e->measured_mg != FD_NOT_MEASURED) {
+        mg = e->measured_mg;
+        kind = "weighed";
+    } else if (e->pulses) {
+        mg = app_mg(e->node, (uint8_t)(e->on_ms / e->pulses / 100u), e->pulses);
+        kind = mg ? "estimated" : "";
+    }
+    if (kind[0]) {
         uint32_t tenths = (mg + 50u) / 100u; /* rounded, as on the screen */
         snprintf(grams, sizeof(grams), "%u.%u", (unsigned)(tenths / 10u), (unsigned)(tenths % 10u));
     }
-    snprintf(line, sizeof(line), "%04u-%02u-%02u %02u:%02u:%02u,%s,%s,%s,%u.%u,%u,%s", c.year, c.month, c.day,
+    snprintf(line, sizeof(line), "%04u-%02u-%02u %02u:%02u:%02u,%s,%s,%s,%u.%u,%u,%s,%s", c.year, c.month, c.day,
              c.hour, c.minute, c.second, name, source, e->result == FD_RES_OK ? "fed" : app_result_text(e->result),
-             e->on_ms / 1000, e->on_ms % 1000 / 100, e->pulses, grams);
+             e->on_ms / 1000, e->on_ms % 1000 / 100, e->pulses, grams, kind);
     plat_sd_append(APP_SD_LOG_FILE, APP_SD_LOG_HEADER, line);
 }
 
@@ -293,6 +346,8 @@ static void log_add(int node, const fd_msg_feed_event_t *ev)
     e->result = ev->result;
     e->pulses = ev->pulses_done;
     e->on_ms = ev->on_ms_total;
+    e->measured_mg = ev->measured_mg;
+    learn_from_weighing(node, ev);
     logbuf.head = (uint16_t)((logbuf.head + 1) % APP_LOG_SIZE);
     if (logbuf.count < APP_LOG_SIZE) {
         logbuf.count++;
@@ -467,10 +522,14 @@ void app_on_packet(const uint8_t mac[6], const uint8_t *data, uint8_t len)
     case FD_MSG_FEED_EVENT: {
         const fd_msg_feed_event_t *ev = (const fd_msg_feed_event_t *)data;
         send_ack(mac, hdr, ev->event_id);
-        /* The node resends until it sees our ACK; log each event once. */
-        if (!(r->have_event && r->last_event_id == ev->event_id)) {
+        /* The node resends until it sees our ACK; log each event once. A
+         * feeder numbers its events from 1 again after every restart, so
+         * the number alone does not identify a repeat: the time must match
+         * as well. */
+        if (!(r->have_event && r->last_event_id == ev->event_id && r->last_event_epoch == ev->local_epoch)) {
             r->have_event = true;
             r->last_event_id = ev->event_id;
+            r->last_event_epoch = ev->local_epoch;
             log_add(idx, ev);
         }
         break;
@@ -488,6 +547,15 @@ void app_on_packet(const uint8_t mac[6], const uint8_t *data, uint8_t len)
                 ota_finish(APP_OTA_FAILED, a->code == FD_RES_BUSY ? "The feeder is busy feeding"
                                                                    : "The feeder refused the update");
             }
+        } else if (a->acked_type == FD_MSG_SCALE_SET && scale.active && scale.node == idx &&
+                   hdr->seq == scale.msg.hdr.seq) {
+            scale.active = false;
+            scale.result = a->code;
+            changes |= APP_CH_SCALE;
+            /* Ask for a fresh reading so the screen shows the effect. */
+            fd_msg_simple_t q;
+            fd_hdr_init(&q.hdr, FD_MSG_STATUS_REQ, ++tx_seq);
+            plat_send(nodes.nodes[idx].mac, &q, sizeof(q));
         } else if (a->acked_type == FD_MSG_FEED_NOW && feed.active && feed.node == idx &&
                    hdr->seq == feed.seq) {
             feed.active = false;
@@ -521,6 +589,19 @@ void app_tick(void)
             changes |= APP_CH_FEED;
         } else {
             send_feed(); /* same seq: the node will not feed twice */
+        }
+    }
+
+    if (scale.active && ms - scale.last_ms >= FEED_RETRY_MS) {
+        if (scale.tries >= FEED_TRIES || !app_node(scale.node)) {
+            scale.active = false;
+            scale.result = APP_FEED_NO_REPLY;
+            changes |= APP_CH_SCALE;
+        } else {
+            /* Same seq: zeroing or setting the span twice is harmless. */
+            plat_send(nodes.nodes[scale.node].mac, &scale.msg, sizeof(scale.msg));
+            scale.last_ms = ms;
+            scale.tries++;
         }
     }
 
@@ -675,6 +756,39 @@ bool app_feed_now(int idx)
 {
     return app_feed_custom(idx, app_feed_on_ds(idx), settings.s.feed_pulses);
 }
+
+/* ---- scale ---- */
+
+bool app_scale_found(int idx)
+{
+    return app_node_online(idx) && (rt[idx].status.flags & (FD_FLAG_SCALE_FOUND | FD_FLAG_SCALE));
+}
+
+bool app_has_scale(int idx)
+{
+    return app_node(idx) && rt[idx].have_status && (rt[idx].status.flags & FD_FLAG_SCALE);
+}
+
+int32_t app_hopper_mg(int idx) { return app_has_scale(idx) ? rt[idx].status.hopper_mg : 0; }
+
+bool app_scale_set(int idx, uint8_t op, uint32_t known_mg)
+{
+    if (scale.active || !app_node(idx)) {
+        return false;
+    }
+    fd_hdr_init(&scale.msg.hdr, FD_MSG_SCALE_SET, ++tx_seq);
+    scale.msg.op = op;
+    scale.msg.known_mg = known_mg;
+    scale.active = true;
+    scale.node = scale.last_node = idx;
+    scale.tries = 1;
+    scale.last_ms = plat_millis();
+    plat_send(nodes.nodes[idx].mac, &scale.msg, sizeof(scale.msg));
+    return true;
+}
+
+int app_scale_last_node(void) { return scale.last_node; }
+uint8_t app_scale_last_result(void) { return scale.result; }
 
 /* ---- calibration ---- */
 

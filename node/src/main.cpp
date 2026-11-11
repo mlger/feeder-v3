@@ -4,7 +4,7 @@
 // limits) lives in the shared state machine, feeder/node.h, which is also
 // what the unit tests and the HMI simulator run. This file only connects it
 // to the ESP8266: flash storage, the DS3231, the relay, the radio, the
-// button and the LED.
+// button, the LED and the optional scale.
 //
 // Safety: the relay is driven low before anything else at boot, every feed
 // is clamped to compile-time hard limits (see platformio.ini), and an
@@ -21,6 +21,7 @@
 
 #include "config.h"
 #include "feeder/node.h"
+#include "scale.h"
 
 static fd_node_t node;
 
@@ -68,7 +69,7 @@ static bool loadBlob(const char *path, void *data, size_t len)
 
 // The file names carry a layout version; bump it if the structs change.
 static const char *CFG_FILE = "/cfg2.bin";
-static const char *STATE_FILE = "/state2.bin";
+static const char *STATE_FILE = "/state3.bin";
 
 static void ioSaveConfig(void *, const fd_node_cfg_t *cfg) { saveBlob(CFG_FILE, cfg, sizeof(*cfg)); }
 static void ioSaveState(void *, const fd_node_state_t *st) { saveBlob(STATE_FILE, st, sizeof(*st)); }
@@ -195,6 +196,15 @@ static void ioOta(void *, const fd_msg_ota_start_t *m)
     ESP.restart();
 }
 
+// ------------------------------------------------------------------ scale
+
+static bool ioScaleFound(void *) { return scaleFound(); }
+static bool ioScaleRead(void *, int32_t *mg) { return scaleRead(mg); }
+static bool ioScaleSet(void *, uint8_t op, uint32_t knownMg)
+{
+    return op == FD_SCALE_ZERO ? scaleZero() : scaleSpan(knownMg);
+}
+
 // --------------------------------------------------------- button and LED
 
 static void buttonLoop()
@@ -272,6 +282,8 @@ void setup()
         memset(&st, 0, sizeof(st));
     }
 
+    scaleBegin();
+
     Wire.begin(PIN_SDA, PIN_SCL);
     rtcPresent = rtc.begin();
     bool timeValid = rtcPresent && !rtc.lostPower();
@@ -290,6 +302,7 @@ void setup()
 
     static const fd_node_io_t io = {
         nullptr, ioSend, ioSetChannel, ioRelay, ioSaveConfig, ioSaveState, ioSetClock, ioArmFailsafe, ioOta,
+        ioScaleFound, ioScaleRead, ioScaleSet,
     };
     fd_node_init(&node, &io, &cfg, &st, FW_MAJOR, FW_MINOR, rtcPresent, timeValid, millis(), nowEpoch());
     Serial.printf("[link] mac=%s paired=%d channel=%u entries=%u rev=%u\n", WiFi.macAddress().c_str(),
@@ -303,6 +316,7 @@ void loop()
         fd_node_rx(&node, millis(), nowEpoch(), p.mac, p.data, p.len);
         rxTail = (rxTail + 1) % RX_QUEUE;
     }
+    scaleLoop();
     fd_node_tick(&node, millis(), nowEpoch());
     buttonLoop();
     ledLoop();

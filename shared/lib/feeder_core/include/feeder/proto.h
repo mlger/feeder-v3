@@ -16,7 +16,7 @@ extern "C" {
 #endif
 
 #define FD_PROTO_MAGIC   0xFD
-#define FD_PROTO_VERSION 1
+#define FD_PROTO_VERSION 2 /* 2: scale readings in STATUS and FEED_EVENT, SCALE_SET */
 
 #define FD_MAX_ENTRIES 16 /* schedule entries per node */
 #define FD_NAME_LEN    16 /* node name, NUL padded */
@@ -34,7 +34,8 @@ typedef enum {
     FD_MSG_STATUS     = 8,  /* node -> hmi: periodic heartbeat */
     FD_MSG_FEED_EVENT = 9,  /* node -> hmi: a feed ran or was refused */
     FD_MSG_ACK        = 10, /* both ways */
-    FD_MSG_OTA_START  = 11  /* hmi  -> node: fetch new firmware over Wi-Fi */
+    FD_MSG_OTA_START  = 11, /* hmi  -> node: fetch new firmware over Wi-Fi */
+    FD_MSG_SCALE_SET  = 12  /* hmi  -> node: zero the scale or set its span */
 } fd_msg_type_t;
 
 /* Outcome of a feed request. Also used as the ACK code. */
@@ -53,6 +54,15 @@ typedef enum {
 #define FD_FLAG_RTC_MISSING 0x02 /* DS3231 not answering on I2C */
 #define FD_FLAG_FEEDING     0x04 /* relay sequence in progress */
 #define FD_FLAG_PAIRING     0x08 /* node is in pairing mode */
+#define FD_FLAG_SCALE_FOUND 0x10 /* a load-cell amplifier is answering */
+#define FD_FLAG_SCALE       0x20 /* the scale is set up: weights are valid */
+
+/* measured_mg in FEED_EVENT when the feed was not weighed. */
+#define FD_NOT_MEASURED 0xFFFFFFFFu
+
+/* fd_msg_scale_set_t.op */
+#define FD_SCALE_ZERO 1 /* the hopper is empty now */
+#define FD_SCALE_SPAN 2 /* the hopper now holds known_mg */
 
 /* Feed source in FEED_EVENT: schedule entry index, or this for manual. */
 #define FD_SOURCE_MANUAL 0xFF
@@ -136,6 +146,8 @@ typedef struct FD_PACKED {
     uint32_t on_ms_today;
     uint16_t feeds_today;
     uint32_t uptime_s;
+    int32_t  hopper_mg;        /* food in the hopper; valid with FD_FLAG_SCALE */
+    uint32_t fed_mg_today;     /* weighed food given today; valid with FD_FLAG_SCALE */
 } fd_msg_status_t;
 
 typedef struct FD_PACKED {
@@ -147,7 +159,14 @@ typedef struct FD_PACKED {
     uint8_t  result;     /* fd_result_t */
     uint8_t  pulses_done;
     uint16_t on_ms_total;
+    uint32_t measured_mg; /* weight the hopper lost, or FD_NOT_MEASURED */
 } fd_msg_feed_event_t;
+
+typedef struct FD_PACKED {
+    fd_hdr_t hdr;
+    uint8_t  op;       /* FD_SCALE_ZERO or FD_SCALE_SPAN */
+    uint32_t known_mg; /* for FD_SCALE_SPAN */
+} fd_msg_scale_set_t;
 
 /*
  * The HMI opens a temporary access point that serves the node firmware at

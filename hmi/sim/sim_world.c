@@ -183,6 +183,9 @@ static void io_relay(void *ctx, bool on)
     sim_node_t *s = ctx;
     if (on && !s->relay) {
         s->relay_pulses++;
+        if (!s->jam) {
+            s->hopper_mg -= s->true_mg_per_pulse; /* food leaves the hopper */
+        }
     }
     s->relay = on;
 }
@@ -202,10 +205,38 @@ static void io_ota(void *ctx, const fd_msg_ota_start_t *m)
     ((sim_node_t *)ctx)->ota_until_ms = now_ms + 8000; /* join, download, flash */
 }
 
+static bool io_scale_found(void *ctx) { return ((sim_node_t *)ctx)->scale_fitted; }
+static bool io_scale_read(void *ctx, int32_t *mg)
+{
+    sim_node_t *s = ctx;
+    if (!s->scale_fitted || !s->scale_ready) {
+        return false;
+    }
+    *mg = s->hopper_mg;
+    return true;
+}
+/* Like the real driver: zero first, then a span of at least 5 g. */
+static bool io_scale_set(void *ctx, uint8_t op, uint32_t known_mg)
+{
+    sim_node_t *s = ctx;
+    if (!s->scale_fitted) {
+        return false;
+    }
+    if (op == FD_SCALE_ZERO) {
+        s->scale_zeroed = true;
+        return true;
+    }
+    if (!s->scale_zeroed || known_mg < 5000) {
+        return false;
+    }
+    s->scale_ready = true;
+    return true;
+}
+
 static void node_boot(sim_node_t *s)
 {
     const fd_node_io_t io = { s, io_send, io_channel, io_relay, io_save_cfg, io_save_state,
-                              io_set_clock, io_failsafe, io_ota };
+                              io_set_clock, io_failsafe, io_ota, io_scale_found, io_scale_read, io_scale_set };
     if (!s->flash_valid) {
         fd_node_default_config(&s->flash_cfg);
         memset(&s->flash_state, 0, sizeof(s->flash_state));

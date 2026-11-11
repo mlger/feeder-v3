@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+static void roll_fed_day(fd_node_t *n, uint32_t now_epoch);
+
 static const uint8_t BROADCAST[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
 void fd_node_default_config(fd_node_cfg_t *cfg)
@@ -104,6 +106,7 @@ static uint8_t status_flags(const fd_node_t *n)
     if (!n->rtc_present) f |= FD_FLAG_RTC_MISSING;
     if (n->pulse.active) f |= FD_FLAG_FEEDING;
     if (n->pairing) f |= FD_FLAG_PAIRING;
+    if (n->io.scale_found && n->io.scale_found(n->io.ctx)) f |= FD_FLAG_SCALE_FOUND;
     return f;
 }
 
@@ -122,7 +125,29 @@ static void send_status(fd_node_t *n, uint32_t now_ms, uint32_t now_epoch)
     s.on_ms_today = n->st.guard.on_ms_today;
     s.feeds_today = n->st.guard.feeds_today;
     s.uptime_s = (now_ms - n->boot_ms) / 1000u;
+    s.hopper_mg = 0;
+    roll_fed_day(n, now_epoch);
+    s.fed_mg_today = n->st.fed_mg_today;
+    int32_t mg;
+    if (n->io.scale_read && n->io.scale_read(n->io.ctx, &mg)) {
+        s.flags |= FD_FLAG_SCALE;
+        s.hopper_mg = mg;
+    } else if (n->scale_ok) {
+        /* Not steady at this instant (for example mid-feed): report the
+         * last good reading instead of dropping the scale from view. */
+        s.flags |= FD_FLAG_SCALE;
+        s.hopper_mg = n->last_hopper_mg;
+    }
     n->io.send(n->io.ctx, n->cfg.hmi_mac, &s, sizeof(s));
+}
+
+static void roll_fed_day(fd_node_t *n, uint32_t now_epoch)
+{
+    uint32_t day = now_epoch / 86400u;
+    if (day != n->st.fed_mg_day) {
+        n->st.fed_mg_day = day;
+        n->st.fed_mg_today = 0;
+    }
 }
 
 static void send_hello(fd_node_t *n)
@@ -138,7 +163,7 @@ static void send_hello(fd_node_t *n)
 /* ---- events ---- */
 
 static void push_event(fd_node_t *n, uint32_t now_epoch, uint8_t source, fd_result_t result,
-                       uint8_t pulses_done, uint32_t on_ms)
+                       uint8_t pulses_done, uint32_t on_ms, uint32_t measured_mg)
 {
     if (n->ev_count == FD_NODE_EVENT_QUEUE) { /* full: drop the oldest */
         n->ev_head = (uint8_t)((n->ev_head + 1) % FD_NODE_EVENT_QUEUE);
@@ -153,16 +178,62 @@ static void push_event(fd_node_t *n, uint32_t now_epoch, uint8_t source, fd_resu
     e->result = (uint8_t)result;
     e->pulses_done = pulses_done;
     e->on_ms_total = on_ms > 0xFFFFu ? 0xFFFFu : (uint16_t)on_ms;
+    e->measured_mg = measured_mg;
     n->ev_count++;
     n->last_event_send_ms = 0; /* send on the next tick */
 }
 
 /* ---- feeding ---- */
 
+/* A steady scale reading, remembered for status reports. */
+static bool scale_now(fd_node_t *n, int32_t *mg)
+{
+    if (!n->io.scale_read || !n->io.scale_read(n->io.ctx, mg)) {
+        return false;
+    }
+    n->scale_ok = true;
+    n->last_hopper_mg = *mg;
+    return true;
+}
+
+/* The relay sequence is over: report it, after weighing if there is a scale. */
+static void feed_finished(fd_node_t *n, uint32_t now_ms, uint32_t now_epoch, fd_result_t result,
+                          uint8_t pulses, uint32_t on_ms)
+{
+    if (!n->have_before) {
+        push_event(n, now_epoch, n->feed_source, result, pulses, on_ms, FD_NOT_MEASURED);
+        return;
+    }
+    n->weighing = true;
+    n->weigh_since_ms = now_ms;
+    n->weigh_result = result;
+    n->weigh_pulses = pulses;
+    n->weigh_on_ms = on_ms;
+}
+
+static void weigh_tick(fd_node_t *n, uint32_t now_ms, uint32_t now_epoch)
+{
+    if (!n->weighing || now_ms - n->weigh_since_ms < FD_NODE_SETTLE_MS) {
+        return;
+    }
+    int32_t after;
+    uint32_t measured = FD_NOT_MEASURED;
+    if (scale_now(n, &after)) {
+        measured = n->before_mg > after ? (uint32_t)(n->before_mg - after) : 0;
+        roll_fed_day(n, now_epoch);
+        n->st.fed_mg_today += measured;
+        n->io.save_state(n->io.ctx, &n->st);
+    } else if (now_ms - n->weigh_since_ms < FD_NODE_WEIGH_TIMEOUT_MS) {
+        return; /* still shaking: try again */
+    }
+    n->weighing = false;
+    push_event(n, now_epoch, n->feed_source, n->weigh_result, n->weigh_pulses, n->weigh_on_ms, measured);
+}
+
 static fd_result_t try_feed(fd_node_t *n, uint32_t now_ms, uint32_t now_epoch, uint8_t source,
                             uint8_t on_ds, uint8_t pulses)
 {
-    if (n->pulse.active) {
+    if (n->pulse.active || n->weighing) {
         return FD_RES_BUSY;
     }
     fd_result_t res = fd_guard_check(&n->st.guard, &n->cfg.limits, now_epoch, &on_ds, &pulses);
@@ -177,6 +248,8 @@ static fd_result_t try_feed(fd_node_t *n, uint32_t now_ms, uint32_t now_epoch, u
 
     n->feed_source = source;
     n->failsafe_fired = false;
+    /* With a scale, the feed is measured as the weight the hopper loses. */
+    n->have_before = scale_now(n, &n->before_mg);
     n->io.arm_failsafe(n->io.ctx, fd_pulse_duration_ms(on_ds, pulses, n->cfg.limits.gap_ds) +
                                       FD_NODE_FAILSAFE_MARGIN_MS);
     fd_pulse_start(&n->pulse, now_ms, on_ds, pulses, n->cfg.limits.gap_ds);
@@ -193,7 +266,7 @@ static void feed_tick(fd_node_t *n, uint32_t now_ms, uint32_t now_epoch)
             uint32_t on = n->pulse.on_ms_total;
             fd_pulse_abort(&n->pulse);
             n->io.relay(n->io.ctx, false);
-            push_event(n, now_epoch, n->feed_source, FD_RES_ABORTED, done, on);
+            feed_finished(n, now_ms, now_epoch, FD_RES_ABORTED, done, on);
         }
         return;
     }
@@ -204,7 +277,7 @@ static void feed_tick(fd_node_t *n, uint32_t now_ms, uint32_t now_epoch)
     if (!n->pulse.active) {
         n->io.arm_failsafe(n->io.ctx, 0);
         n->io.relay(n->io.ctx, false);
-        push_event(n, now_epoch, n->feed_source, FD_RES_OK, n->pulse.pulses_done, n->pulse.on_ms_total);
+        feed_finished(n, now_ms, now_epoch, FD_RES_OK, n->pulse.pulses_done, n->pulse.on_ms_total);
     }
 }
 
@@ -235,7 +308,7 @@ static void schedule_tick(fd_node_t *n, uint32_t now_ms, uint32_t now_epoch)
         if (res == FD_RES_OK) {
             started = true; /* try_feed saved the state */
         } else {
-            push_event(n, now_epoch, i, res, 0, 0);
+            push_event(n, now_epoch, i, res, 0, 0, FD_NOT_MEASURED);
         }
     }
     if (!started) {
@@ -349,6 +422,17 @@ void fd_node_rx(fd_node_t *n, uint32_t now_ms, uint32_t now_epoch, const uint8_t
             send_ack(n, mac, hdr, FD_RES_OK);
         }
         break;
+    case FD_MSG_SCALE_SET: {
+        const fd_msg_scale_set_t *m = (const fd_msg_scale_set_t *)data;
+        bool ok = !n->pulse.active && !n->weighing && n->io.scale_set &&
+                  (m->op == FD_SCALE_ZERO || m->op == FD_SCALE_SPAN) &&
+                  n->io.scale_set(n->io.ctx, m->op, m->known_mg);
+        if (ok) {
+            n->scale_ok = false; /* old readings no longer mean anything */
+        }
+        send_ack(n, mac, hdr, ok ? FD_RES_OK : FD_RES_BAD_REQUEST);
+        break;
+    }
     case FD_MSG_STATUS_REQ:
         send_status(n, now_ms, now_epoch);
         n->last_status_ms = now_ms;
@@ -421,10 +505,11 @@ static void link_tick(fd_node_t *n, uint32_t ms, uint32_t now_epoch)
 void fd_node_tick(fd_node_t *n, uint32_t now_ms, uint32_t now_epoch)
 {
     feed_tick(n, now_ms, now_epoch);
+    weigh_tick(n, now_ms, now_epoch);
     schedule_tick(n, now_ms, now_epoch);
     link_tick(n, now_ms, now_epoch);
 
-    if (n->ota_pending && !n->pulse.active) {
+    if (n->ota_pending && !n->pulse.active && !n->weighing) {
         n->ota_pending = false;
         n->io.arm_failsafe(n->io.ctx, 0);
         n->io.relay(n->io.ctx, false);

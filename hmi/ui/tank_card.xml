@@ -6,6 +6,7 @@
     <prop name="last" type="string"/>
     <prop name="next" type="string"/>
     <prop name="today" type="string"/>
+    <prop name="food" type="string" default=""/>
   </api>
   <view extends="lv_obj" width="336" height="content" flex_flow="column"
         style_pad_all="14" style_pad_row="6" scrollable="false">
@@ -16,6 +17,9 @@
     <lv_label text="$last"/>
     <lv_label text="$next"/>
     <lv_label text="$today">
+      <style name="muted"/>
+    </lv_label>
+    <lv_label name="food" text="$food">
       <style name="muted"/>
     </lv_label>
     <lv_button name="feed_btn" width="100%" height="52">

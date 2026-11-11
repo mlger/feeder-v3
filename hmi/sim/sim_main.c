@@ -251,9 +251,9 @@ int main(int argc, char **argv)
 
     printf("SD card log\n");
     CHECK(sd_lines == app_log_count(), "every history event was written to the SD card");
-    CHECK(strcmp(sd_last_header, "time,feeder,source,result,seconds,pulses,grams") == 0, "CSV header is right");
+    CHECK(strcmp(sd_last_header, "time,feeder,source,result,seconds,pulses,grams,grams_are") == 0, "CSV header is right");
     CHECK(strncmp(sd_last_line, "2026-11-09 08:00:", 17) == 0 &&
-          strcmp(sd_last_line + 19, ",\"Tank 2\",manual,fed,1.0,1,") == 0, "CSV line is as expected (no grams yet)");
+          strcmp(sd_last_line + 19, ",\"Tank 2\",manual,fed,1.0,1,,") == 0, "CSV line is as expected (no grams yet)");
     printf("    last line: %s\n", sd_last_line);
     CHECK(strstr(lv_subject_get_string(lv_xml_get_subject(NULL, "log_summary")), "SD card: logging") != NULL,
           "History shows that the SD card is logging");
@@ -367,6 +367,7 @@ int main(int argc, char **argv)
     printf("Grams calibration\n");
     lv_subject_t *cal_step = lv_xml_get_subject(NULL, "cal_step");
     int pulses_before = fnodes[0].relay_pulses;
+    int log_before = app_log_count();
     ui_show_page(2);
     run(500);
     click("Calibrate", 0);
@@ -376,6 +377,10 @@ int main(int argc, char **argv)
     CHECK(lv_subject_get_int(cal_step) == 2, "the dialog asks for the weight once the feeder accepted");
     run(20000);
     CHECK(fnodes[0].relay_pulses - pulses_before == APP_CAL_PULSES, "the feeder ran the calibration pulses");
+    /* This feeder restarted during the firmware update, so its event
+     * numbers began again at 1; the event must still be recorded. */
+    CHECK(app_log_count() == log_before + 1 && app_log_get(0)->pulses == APP_CAL_PULSES,
+          "the first feed after a feeder restart is recorded in the history");
     lv_subject_set_int(lv_xml_get_subject(NULL, "cal_grams"), 60); /* the cup weighed 6.0 g */
     shot("19b_calibrate_weight");
     click("Save", 0);
@@ -427,12 +432,94 @@ int main(int argc, char **argv)
     run(3000);
     click("OK", 0);
     run(4000);
-    CHECK(strstr(sd_last_line, ",\"Goldfish\",manual,fed,1.0,1,0.6") != NULL, "the SD log line carries the grams");
+    CHECK(strstr(sd_last_line, ",\"Goldfish\",manual,fed,1.0,1,0.6,estimated") != NULL,
+          "the SD log line carries the estimated grams");
     printf("    last line: %s\n", sd_last_line);
 
     app_set_calibration(0, 10, 0);
     CHECK(!app_calibrated(0) && app_feed_on_ds(0) == app_settings()->feed_on_ds, "entering 0 g removes the calibration");
     app_set_calibration(0, 10, 6000);
+
+    printf("A scale is fitted under the first feeder's hopper\n");
+    lv_subject_t *alert = lv_xml_get_subject(NULL, "alert");
+    lv_subject_t *scale_text = lv_xml_get_subject(NULL, "scale_text");
+    fnodes[0].scale_fitted = true;
+    fnodes[0].hopper_mg = 0; /* empty */
+    fnodes[0].true_mg_per_pulse = 500; /* a pulse really drops 0.5 g, not the calibrated 0.6 */
+    run(12000);
+    CHECK(app_scale_found(0) && !app_has_scale(0), "the controller sees a scale that is not set up yet");
+    CHECK(!app_scale_found(1), "the other feeder has none");
+    ui_show_page(2);
+    run(500);
+    click("Calibrate", 0);
+    CHECK(lv_subject_get_int(lv_xml_get_subject(NULL, "cal_scale")) == 1, "the Scale button is offered");
+    click("Scale", 0);
+    click("2. Set weight", 0);
+    run(1500);
+    CHECK(strstr(lv_subject_get_string(scale_text), "could not") != NULL && !app_has_scale(0),
+          "setting the weight before zeroing is refused");
+    click("1. Zero", 0);
+    run(1500);
+    CHECK(strstr(lv_subject_get_string(scale_text), "Done") != NULL, "zeroing is confirmed");
+    fnodes[0].hopper_mg = 100000; /* the user puts a 100 g weight in */
+    click("2. Set weight", 0);
+    run(2500);
+    CHECK(app_has_scale(0) && app_hopper_mg(0) == 100000, "after the span is set the reading is 100 g");
+    shot("19f_scale_setup");
+    click("Close", 0);
+
+    fnodes[0].hopper_mg = 180000; /* weight out, hopper filled */
+    run(11 * 60000);
+    lv_display_trigger_activity(NULL);
+    ui_show_page(0);
+    run(500);
+    click("Feed now", 0);
+    click("Feed", 0);
+    run(6000);
+    click("OK", 0);
+    run(3000);
+    CHECK(app_log_get(0)->measured_mg == 500, "the feed was weighed: 0.5 g left the hopper");
+    CHECK(strstr(sd_last_line, ",manual,fed,1.0,1,0.5,weighed") != NULL, "the SD log has the weighed grams");
+    CHECK(app_node(0)->mg_per_pulse == 575, "the estimate moved a quarter of the way to what was weighed");
+    run(12000);
+    CHECK(app_hopper_mg(0) == 179500 && app_node_rt(0)->status.fed_mg_today == 500,
+          "food left and today's weighed total are reported");
+    shot("19g_home_scale");
+    ui_show_page(3);
+    run(500);
+    shot("19h_history_weighed");
+
+    printf("The mechanism jams\n");
+    fnodes[0].jam = true;
+    run(11 * 60000);
+    lv_display_trigger_activity(NULL);
+    ui_show_page(0);
+    run(500);
+    click("Feed now", 0);
+    click("Feed", 0);
+    run(6000);
+    click("OK", 0);
+    run(3000);
+    CHECK(app_log_get(0)->measured_mg == 0 && app_node_rt(0)->low_output, "a feed that drops nothing is noticed");
+    CHECK(strstr(lv_subject_get_string(alert), "little food came out") != NULL, "and shown as an alert");
+    CHECK(app_node(0)->mg_per_pulse == 575, "a jam does not spoil the estimate");
+    shot("19i_jam_alert");
+
+    printf("The hopper runs low\n");
+    fnodes[0].jam = false;
+    fnodes[0].hopper_mg = 12000;
+    run(11 * 60000);
+    lv_display_trigger_activity(NULL);
+    click("Feed now", 0);
+    click("Feed", 0);
+    run(6000);
+    click("OK", 0);
+    run(14000);
+    CHECK(!app_node_rt(0)->low_output, "a good feed clears the jam warning");
+    CHECK(strstr(lv_subject_get_string(alert), "food is low") != NULL, "less than 20 g left raises a low-food alert");
+    fnodes[0].hopper_mg = 180000;
+    run(12000);
+    CHECK(lv_subject_get_string(alert)[0] == '\0', "refilling clears it");
 
     printf("Light theme\n");
     lv_subject_set_int(lv_xml_get_subject(NULL, "dark"), 0);

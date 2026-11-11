@@ -26,6 +26,12 @@ static struct {
     uint32_t clock_set_to;
     uint32_t failsafe_ms;
     int      ota_calls;
+    /* scale under the hopper */
+    bool     scale_fitted, scale_ready, scale_steady;
+    int32_t  hopper_mg;
+    int32_t  mg_per_pulse;
+    uint8_t  scale_op;
+    uint32_t scale_known;
 } hw;
 
 static void hw_send(void *c, const uint8_t mac[6], const void *msg, uint8_t len)
@@ -49,6 +55,7 @@ static void hw_relay(void *c, bool on)
     (void)c;
     if (on && !hw.relay) {
         hw.relay_rises++;
+        hw.hopper_mg -= hw.mg_per_pulse; /* food leaves the hopper */
     }
     hw.relay = on;
 }
@@ -58,8 +65,30 @@ static bool hw_set_clock(void *c, uint32_t e) { (void)c; hw.clock_set_to = e; re
 static void hw_failsafe(void *c, uint32_t ms) { (void)c; hw.failsafe_ms = ms; }
 static void hw_ota(void *c, const fd_msg_ota_start_t *m) { (void)c; (void)m; hw.ota_calls++; }
 
+static bool hw_scale_found(void *c) { (void)c; return hw.scale_fitted; }
+static bool hw_scale_read(void *c, int32_t *mg)
+{
+    (void)c;
+    if (!hw.scale_fitted || !hw.scale_ready || !hw.scale_steady) {
+        return false;
+    }
+    *mg = hw.hopper_mg;
+    return true;
+}
+static bool hw_scale_set(void *c, uint8_t op, uint32_t known)
+{
+    (void)c;
+    hw.scale_op = op;
+    hw.scale_known = known;
+    if (!hw.scale_fitted) {
+        return false;
+    }
+    hw.scale_ready = op == FD_SCALE_SPAN || hw.scale_ready;
+    return true;
+}
+
 static const fd_node_io_t IO = { NULL, hw_send, hw_channel, hw_relay, hw_save_cfg, hw_save_state,
-                                 hw_set_clock, hw_failsafe, hw_ota };
+                                 hw_set_clock, hw_failsafe, hw_ota, hw_scale_found, hw_scale_read, hw_scale_set };
 
 static fd_node_t node;
 static uint32_t ms, epoch;
@@ -445,6 +474,124 @@ static void test_bad_schedule_is_rejected_whole(void)
     TEST_ASSERT_EQUAL_UINT8(1, node.cfg.count);
 }
 
+/* ---- scale ---- */
+
+static void fit_scale(void)
+{
+    hw.scale_fitted = hw.scale_ready = hw.scale_steady = true;
+    hw.hopper_mg = 100000;
+    hw.mg_per_pulse = 550;
+}
+
+static void test_without_a_scale_feeds_are_not_measured(void)
+{
+    pair();
+    clear_sent();
+    feed_now(80, 5, 2);
+    run(3000);
+    const fd_msg_feed_event_t *e = (const fd_msg_feed_event_t *)last_sent(FD_MSG_FEED_EVENT);
+    TEST_ASSERT_NOT_NULL(e);
+    TEST_ASSERT_EQUAL_HEX32(FD_NOT_MEASURED, e->measured_mg);
+    const fd_msg_status_t *s = (const fd_msg_status_t *)last_sent(FD_MSG_STATUS);
+    TEST_ASSERT_NOT_NULL(s);
+    TEST_ASSERT_EQUAL_UINT8(0, s->flags & (FD_FLAG_SCALE | FD_FLAG_SCALE_FOUND));
+}
+
+static void test_scale_measures_what_the_hopper_lost(void)
+{
+    fit_scale();
+    pair();
+    clear_sent();
+    feed_now(81, 5, 3); /* 3 pulses of 550 mg: 3 x 0.5 s on, 2 x 0.5 s gap */
+    run(2600);          /* relay done at 2.5 s; the event waits for the weighing */
+    TEST_ASSERT_NULL(last_sent(FD_MSG_FEED_EVENT));
+    run(FD_NODE_SETTLE_MS + 200);
+    const fd_msg_feed_event_t *e = (const fd_msg_feed_event_t *)last_sent(FD_MSG_FEED_EVENT);
+    TEST_ASSERT_NOT_NULL(e);
+    TEST_ASSERT_EQUAL_UINT32(1650, e->measured_mg);
+    TEST_ASSERT_EQUAL_UINT8(3, e->pulses_done);
+    TEST_ASSERT_EQUAL_UINT32(1650, node.st.fed_mg_today);
+    TEST_ASSERT_EQUAL_UINT32(1650, hw.saved_state.fed_mg_today);
+
+    run(FD_NODE_STATUS_PERIOD_MS);
+    const fd_msg_status_t *s = (const fd_msg_status_t *)last_sent(FD_MSG_STATUS);
+    TEST_ASSERT_NOT_NULL(s);
+    TEST_ASSERT_TRUE(s->flags & FD_FLAG_SCALE);
+    TEST_ASSERT_TRUE(s->flags & FD_FLAG_SCALE_FOUND);
+    TEST_ASSERT_EQUAL_INT32(100000 - 1650, s->hopper_mg);
+    TEST_ASSERT_EQUAL_UINT32(1650, s->fed_mg_today);
+}
+
+static void test_a_jam_is_measured_as_nothing(void)
+{
+    fit_scale();
+    hw.mg_per_pulse = 0; /* the mechanism moves but no food falls */
+    pair();
+    feed_now(82, 5, 2);
+    run(5000);
+    const fd_msg_feed_event_t *e = (const fd_msg_feed_event_t *)last_sent(FD_MSG_FEED_EVENT);
+    TEST_ASSERT_NOT_NULL(e);
+    TEST_ASSERT_EQUAL_UINT8(FD_RES_OK, e->result);
+    TEST_ASSERT_EQUAL_UINT32(0, e->measured_mg);
+}
+
+static void test_no_second_feed_while_weighing(void)
+{
+    fit_scale();
+    pair();
+    fd_limits_t none = { 5, 0, 0 };
+    node.cfg.limits = none; /* no cooldown, so only the weighing can refuse */
+    feed_now(83, 5, 1);
+    run(600); /* relay done at 0.5 s, weighing until 2.0 s */
+    feed_now(84, 5, 1);
+    TEST_ASSERT_EQUAL_UINT8(FD_RES_BUSY, ((const fd_msg_ack_t *)last_sent(FD_MSG_ACK))->code);
+    run(2000);
+    feed_now(85, 5, 1);
+    TEST_ASSERT_EQUAL_UINT8(FD_RES_OK, ((const fd_msg_ack_t *)last_sent(FD_MSG_ACK))->code);
+}
+
+static void test_unsteady_scale_gives_up_and_reports_unmeasured(void)
+{
+    fit_scale();
+    pair();
+    clear_sent();
+    feed_now(86, 5, 1);
+    hw.scale_steady = false; /* the hopper keeps swinging */
+    run(FD_NODE_WEIGH_TIMEOUT_MS + 1000);
+    const fd_msg_feed_event_t *e = (const fd_msg_feed_event_t *)last_sent(FD_MSG_FEED_EVENT);
+    TEST_ASSERT_NOT_NULL(e);
+    TEST_ASSERT_EQUAL_HEX32(FD_NOT_MEASURED, e->measured_mg);
+    TEST_ASSERT_EQUAL_UINT32(0, node.st.fed_mg_today);
+}
+
+static void test_scale_commands_reach_the_hardware(void)
+{
+    pair();
+    fd_msg_scale_set_t m;
+    fd_hdr_init(&m.hdr, FD_MSG_SCALE_SET, 90);
+    m.op = FD_SCALE_ZERO;
+    m.known_mg = 0;
+    rx(HMI, &m, sizeof(m)); /* no scale fitted */
+    TEST_ASSERT_EQUAL_UINT8(FD_RES_BAD_REQUEST, ((const fd_msg_ack_t *)last_sent(FD_MSG_ACK))->code);
+
+    hw.scale_fitted = true;
+    hw.scale_steady = true;
+    rx(HMI, &m, sizeof(m));
+    TEST_ASSERT_EQUAL_UINT8(FD_RES_OK, ((const fd_msg_ack_t *)last_sent(FD_MSG_ACK))->code);
+    m.hdr.seq = 91;
+    m.op = FD_SCALE_SPAN;
+    m.known_mg = 100000;
+    rx(HMI, &m, sizeof(m));
+    TEST_ASSERT_EQUAL_UINT8(FD_SCALE_SPAN, hw.scale_op);
+    TEST_ASSERT_EQUAL_UINT32(100000, hw.scale_known);
+
+    m.hdr.seq = 92;
+    m.op = 9; /* unknown operation */
+    rx(HMI, &m, sizeof(m));
+    TEST_ASSERT_EQUAL_UINT8(FD_RES_BAD_REQUEST, ((const fd_msg_ack_t *)last_sent(FD_MSG_ACK))->code);
+    rx(OTHER, &m, sizeof(m)); /* and never from a stranger */
+}
+
 /* ---- firmware update ---- */
 
 static void test_update_waits_for_a_running_feed(void)
@@ -489,6 +636,12 @@ int main(void)
     RUN_TEST(test_no_scheduled_feed_until_the_clock_is_set);
     RUN_TEST(test_time_sync_without_a_clock_chip_is_refused);
     RUN_TEST(test_bad_schedule_is_rejected_whole);
+    RUN_TEST(test_without_a_scale_feeds_are_not_measured);
+    RUN_TEST(test_scale_measures_what_the_hopper_lost);
+    RUN_TEST(test_a_jam_is_measured_as_nothing);
+    RUN_TEST(test_no_second_feed_while_weighing);
+    RUN_TEST(test_unsteady_scale_gives_up_and_reports_unmeasured);
+    RUN_TEST(test_scale_commands_reach_the_hardware);
     RUN_TEST(test_update_waits_for_a_running_feed);
     return UNITY_END();
 }

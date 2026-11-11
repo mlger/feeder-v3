@@ -50,7 +50,9 @@ typedef struct {
     fd_msg_status_t status;
     bool            have_event;
     uint16_t        last_event_id;
+    uint32_t        last_event_epoch;
     uint32_t        last_push_ms; /* rate limit for SCHED_SET / TIME_SYNC */
+    bool            low_output;   /* the last weighed feed gave far less than expected */
 } app_node_rt_t;
 
 typedef struct {
@@ -66,6 +68,7 @@ typedef struct {
     uint8_t  result;  /* fd_result_t */
     uint8_t  pulses;
     uint16_t on_ms;
+    uint32_t measured_mg; /* weighed by the feeder's scale, or FD_NOT_MEASURED */
 } app_log_entry_t;
 
 typedef struct {
@@ -84,7 +87,8 @@ typedef enum {
     APP_CH_LOG      = 1 << 2,
     APP_CH_SCHEDULE = 1 << 3,
     APP_CH_FEED     = 1 << 4, /* a manual feed got its answer */
-    APP_CH_OTA      = 1 << 5  /* a feeder update changed state */
+    APP_CH_OTA      = 1 << 5, /* a feeder update changed state */
+    APP_CH_SCALE    = 1 << 6  /* a scale set-up command got its answer */
 } app_change_t;
 
 void app_init(void);
@@ -127,6 +131,17 @@ uint8_t app_feed_on_ds(int idx);
 /* Milligrams for `pulses` of `on_ds`, or 0 if that is not known. */
 uint32_t app_mg(int idx, uint8_t on_ds, uint32_t pulses);
 
+/* ---- scale under the hopper (optional hardware) ---- */
+#define APP_LOW_FOOD_MG 20000 /* warn when less than this is left */
+
+bool    app_scale_found(int idx);  /* the feeder has a load-cell amplifier */
+bool    app_has_scale(int idx);    /* ...and it is set up: weights are real */
+int32_t app_hopper_mg(int idx);    /* food left; only with app_has_scale() */
+/* FD_SCALE_ZERO / FD_SCALE_SPAN. False if another request is in flight. */
+bool    app_scale_set(int idx, uint8_t op, uint32_t known_mg);
+int     app_scale_last_node(void);
+uint8_t app_scale_last_result(void); /* FD_RES_OK, FD_RES_BAD_REQUEST or APP_FEED_NO_REPLY */
+
 /* ---- manual feed ---- */
 bool    app_feed_now(int idx); /* false if another request is in flight */
 bool    app_feed_custom(int idx, uint8_t on_ds, uint8_t pulses);
@@ -160,7 +175,7 @@ void            app_settings_save(void);
 
 /* Every feed event is also appended to this file on the SD card. */
 #define APP_SD_LOG_FILE   "feedlog.csv"
-#define APP_SD_LOG_HEADER "time,feeder,source,result,seconds,pulses,grams"
+#define APP_SD_LOG_HEADER "time,feeder,source,result,seconds,pulses,grams,grams_are"
 
 /* Text for a feed result code. */
 const char *app_result_text(uint8_t result);

@@ -71,6 +71,8 @@ void ui_calibrate_open(int idx);
 /* A manual feed got its answer. Returns true if it belonged to a running
  * calibration, which then shows its own message. */
 bool ui_calibrate_feed_result(int idx, uint8_t result);
+void ui_calibrate_tick(void);                        /* keeps the scale dialog's reading live */
+void ui_scale_result(int idx, uint8_t result);       /* a scale set-up command was answered */
 
 /* ---- ui_network.c ---- */
 

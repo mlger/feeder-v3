@@ -68,9 +68,13 @@ static void demo_setup(void)
     n->count = 2;
     app_schedule_changed(a);
 
-    /* The first feeder is calibrated (0.6 g per pulse), the second is not,
-     * so both ways of showing a portion can be seen. */
+    /* The first feeder is calibrated (0.6 g per pulse) and has a scale under
+     * its hopper; the second has neither, so every way of showing a portion
+     * can be seen. */
     app_set_calibration(a, 10, 6000);
+    fnodes[0].scale_fitted = fnodes[0].scale_zeroed = fnodes[0].scale_ready = true;
+    fnodes[0].hopper_mg = 180000;
+    fnodes[0].true_mg_per_pulse = 580;
 
     n = app_node(b);
     memcpy(n->entries, tank2, sizeof(tank2));

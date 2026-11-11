@@ -25,6 +25,7 @@ uint8_t fd_proto_validate(const uint8_t *buf, uint16_t len)
     case FD_MSG_STATUS:     want = sizeof(fd_msg_status_t); break;
     case FD_MSG_FEED_EVENT: want = sizeof(fd_msg_feed_event_t); break;
     case FD_MSG_ACK:        want = sizeof(fd_msg_ack_t); break;
+    case FD_MSG_SCALE_SET:  want = sizeof(fd_msg_scale_set_t); break;
     case FD_MSG_OTA_START: {
         const fd_msg_ota_start_t *m = (const fd_msg_ota_start_t *)buf;
         if (len != sizeof(*m) || m->ssid[FD_OTA_STR_LEN - 1] != '\0' ||
