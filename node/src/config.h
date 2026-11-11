@@ -3,8 +3,11 @@
 
 #include <Arduino.h>
 
+// Normally set by the build from the repository's VERSION file.
+#ifndef FW_MAJOR
 #define FW_MAJOR 0
-#define FW_MINOR 3
+#define FW_MINOR 0
+#endif
 
 // Relay input, active high. GPIO14 (D5) has no boot-strap function and stays
 // low through reset. Fit a 10 k pull-down from this pin to GND so the relay

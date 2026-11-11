@@ -32,6 +32,9 @@ set(APP_SRC
     sim_world.c
     ${HMI}/lib/feeder_app/src/app.c
     ${HMI}/lib/feeder_app/src/ui.c
+    ${HMI}/lib/feeder_app/src/ui_schedule.c
+    ${HMI}/lib/feeder_app/src/ui_network.c
+    ${HMI}/lib/feeder_app/src/ui_format.c
     ${CORE}/src/core.c
     ${CORE}/src/node.c
     ${XML_GEN})

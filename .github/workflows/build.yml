@@ -2,6 +2,8 @@ name: build
 
 on:
   push:
+    branches: ["**"]
+    tags: ["v*"]
   pull_request:
 
 env:
@@ -111,7 +113,7 @@ jobs:
           path: artifacts
       - name: Build the site
         run: |
-          version="$(sed -n 's/#define APP_VERSION *"\(.*\)"/\1/p' hmi/lib/feeder_app/include/app.h)+${GITHUB_SHA::7}"
+          version="$(cat VERSION)+${GITHUB_SHA::7}"
           python3 web/build_site.py --out _site --version "$version" \
             --hmi-dir artifacts/hmi-firmware --node-bin artifacts/node-firmware/firmware.bin \
             --demo-dir artifacts/demo
@@ -134,3 +136,34 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  release:
+    name: Publish a release
+    # Pushing a tag such as v0.4.0 attaches the firmware files to a release.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, sim, node, hmi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check that the tag matches VERSION
+        run: |
+          if [ "v$(cat VERSION)" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match VERSION ($(cat VERSION))." >&2
+            exit 1
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Name the files
+        run: |
+          mkdir release
+          cp artifacts/hmi-firmware/firmware.bin "release/aio-feeder-controller-$GITHUB_REF_NAME.bin"
+          cp artifacts/node-firmware/firmware.bin "release/aio-feeder-feeder-$GITHUB_REF_NAME.bin"
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release/* --title "AIO-Feeder $GITHUB_REF_NAME" \
+            --notes "Upload these two files on the controller's update page (Network > Firmware updates), or install from the project web site with a USB cable."

@@ -29,6 +29,7 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "lwip/sockets.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "plat.h"
@@ -382,18 +383,44 @@ static int recv_some(httpd_req_t *req, char *buf, size_t want)
     return -1;
 }
 
+/* True if the request arrived on the access point's own address, that is,
+ * from a device that joined the temporary access point. */
+static bool via_access_point(httpd_req_t *req)
+{
+    struct sockaddr_storage addr;
+    socklen_t len = sizeof(addr);
+    esp_netif_ip_info_t info;
+    if (getsockname(httpd_req_to_sockfd(req), (struct sockaddr *)&addr, &len) != 0 ||
+        esp_netif_get_ip_info(ap_netif, &info) != ESP_OK) {
+        return false;
+    }
+    uint32_t local = 0;
+    if (addr.ss_family == AF_INET) {
+        local = ((struct sockaddr_in *)&addr)->sin_addr.s_addr;
+    } else if (addr.ss_family == AF_INET6) {
+        /* lwIP reports IPv4 clients on a dual-stack socket as ::ffff:a.b.c.d. */
+        const struct sockaddr_in6 *a6 = (const struct sockaddr_in6 *)&addr;
+        memcpy(&local, &a6->sin6_addr.s6_addr[12], 4);
+    }
+    return local == info.ip.addr;
+}
+
 static esp_err_t h_root(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html");
-    /* A phone on the set-up access point gets the Wi-Fi form. */
-    return httpd_resp_send(req, atomic_load(&setup_ap_open) ? WIFI_PAGE : WEB_PAGE, HTTPD_RESP_USE_STRLEN);
+    /* A phone on the set-up access point gets the Wi-Fi form; devices on
+     * the home network keep seeing the normal page. */
+    bool setup = atomic_load(&setup_ap_open) && via_access_point(req);
+    return httpd_resp_send(req, setup ? WIFI_PAGE : WEB_PAGE, HTTPD_RESP_USE_STRLEN);
 }
 
 /* ---- Wi-Fi set-up form (only while the set-up access point is open) ---- */
 
 static bool setup_open(httpd_req_t *req)
 {
-    if (atomic_load(&setup_ap_open)) {
+    /* Only for a device that joined the set-up access point with the
+     * password shown on the controller's screen. */
+    if (atomic_load(&setup_ap_open) && via_access_point(req)) {
         return true;
     }
     reply(req, "403 Forbidden", "Wi-Fi set-up is closed. On the controller open Network and press Use phone.");

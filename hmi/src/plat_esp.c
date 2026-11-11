@@ -153,8 +153,17 @@ void plat_send(const uint8_t mac[6], const void *msg, uint8_t len)
         esp_now_peer_info_t peer = { .channel = 0, .ifidx = WIFI_IF_STA, .encrypt = false };
         memcpy(peer.peer_addr, mac, 6);
         if (esp_now_add_peer(&peer) != ESP_OK) {
-            ESP_LOGW(TAG, "peer table full");
-            return;
+            /* The table (20 entries) fills up with feeders that were removed
+             * or only ever seen in pairing mode. Peers are added on demand,
+             * so empty it and start again. */
+            esp_now_peer_info_t old;
+            while (esp_now_fetch_peer(true, &old) == ESP_OK) {
+                esp_now_del_peer(old.peer_addr);
+            }
+            if (esp_now_add_peer(&peer) != ESP_OK) {
+                ESP_LOGW(TAG, "cannot add ESP-NOW peer");
+                return;
+            }
         }
     }
     esp_now_send(mac, msg, len);

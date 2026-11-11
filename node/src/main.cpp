@@ -253,7 +253,11 @@ void setup()
     pinMode(PIN_LED, OUTPUT);
     pinMode(PIN_BUTTON, INPUT_PULLUP);
     Serial.begin(115200);
+#ifdef APP_VERSION
+    Serial.printf("\nAIO-Feeder node %s\n", APP_VERSION);
+#else
     Serial.printf("\nAIO-Feeder node v%d.%d\n", FW_MAJOR, FW_MINOR);
+#endif
 
     if (!LittleFS.begin()) {
         LittleFS.format();
