@@ -1,0 +1,55 @@
+<!-- Grams calibration: run a fixed number of pulses, then enter what they weighed. -->
+<component>
+  <view extends="lv_obj" width="100%" height="100%" scrollable="false">
+    <style name="backdrop"/>
+    <lv_obj width="600" height="content" align="center" flex_flow="column"
+            style_pad_all="18" style_pad_row="14" scrollable="false">
+      <lv_label bind_text="cal_title" style_text_font="font_l"/>
+      <lv_label bind_text="cal_text" width="100%" long_mode="wrap"/>
+
+      <!-- Step 0: choose the pulse length and run. -->
+      <row style_flex_main_place="space_between">
+        <bind_flag_if_not_eq subject="cal_step" flag="hidden" ref_value="0"/>
+        <stepper title="Pulse length" w="160" subject="cal_on" display="cal_on_txt" fmt="%s" min="1" max="50"/>
+        <row width="content">
+          <lv_button width="130" height="48">
+            <style name="quiet"/>
+            <event_cb callback="on_cal_cancel" trigger="clicked"/>
+            <lv_label text="Cancel" align="center"/>
+          </lv_button>
+          <lv_button width="130" height="48">
+            <event_cb callback="on_cal_run" trigger="clicked"/>
+            <lv_label text="Run" align="center"/>
+          </lv_button>
+        </row>
+      </row>
+
+      <!-- Step 1: waiting for the feeder to answer. -->
+      <row style_flex_main_place="end">
+        <bind_flag_if_not_eq subject="cal_step" flag="hidden" ref_value="1"/>
+        <lv_button width="130" height="48">
+          <style name="quiet"/>
+          <event_cb callback="on_cal_cancel" trigger="clicked"/>
+          <lv_label text="Cancel" align="center"/>
+        </lv_button>
+      </row>
+
+      <!-- Step 2: enter the weight. -->
+      <row style_flex_main_place="space_between">
+        <bind_flag_if_not_eq subject="cal_step" flag="hidden" ref_value="2"/>
+        <stepper title="Weight" w="190" subject="cal_grams" display="cal_grams_txt" fmt="%s" min="0" max="2000"/>
+        <row width="content">
+          <lv_button width="130" height="48">
+            <style name="quiet"/>
+            <event_cb callback="on_cal_cancel" trigger="clicked"/>
+            <lv_label text="Cancel" align="center"/>
+          </lv_button>
+          <lv_button width="130" height="48">
+            <event_cb callback="on_cal_save" trigger="clicked"/>
+            <lv_label text="Save" align="center"/>
+          </lv_button>
+        </row>
+      </row>
+    </lv_obj>
+  </view>
+</component>

@@ -10,6 +10,7 @@ static lv_subject_t s_sched_node;
 static lv_subject_t s_lim_cool, s_lim_daily, s_lim_gap;
 static lv_subject_t s_lim_cool_txt, s_lim_daily_txt, s_lim_gap_txt;
 static lv_subject_t s_ed_hour, s_ed_min, s_ed_on, s_ed_pulses, s_ed_on_txt, s_ed_title;
+static lv_subject_t s_ed_cal, s_ed_grams_txt; /* editor in grams mode, and the amount shown */
 static lv_subject_t s_ed_day[7];
 
 static lv_obj_t *sched_list, *sched_dd;
@@ -27,12 +28,21 @@ int ui_sched_node_idx(void)
 
 static void limits_to_text(void)
 {
-    char buf[24];
+    char buf[40];
     int v = lv_subject_get_int(&s_lim_cool);
     snprintf(buf, sizeof(buf), v ? "%d min" : "Off", v);
     lv_subject_copy_string(&s_lim_cool_txt, buf);
     v = lv_subject_get_int(&s_lim_daily);
-    snprintf(buf, sizeof(buf), v ? "%d s" : "Off", v);
+    /* The feeder counts relay-on seconds; show what that is in food. */
+    int idx = ui_sched_node_idx();
+    if (v && app_calibrated(idx)) {
+        char g[16];
+        const app_node_cfg_t *n = app_node(idx);
+        ui_fmt_grams(g, sizeof(g), (uint32_t)v * 10u / n->cal_on_ds * n->mg_per_pulse);
+        snprintf(buf, sizeof(buf), "%d s = %s", v, g);
+    } else {
+        snprintf(buf, sizeof(buf), v ? "%d s" : "Off", v);
+    }
     lv_subject_copy_string(&s_lim_daily_txt, buf);
     ui_fmt_ds(buf, sizeof(buf), lv_subject_get_int(&s_lim_gap));
     lv_subject_copy_string(&s_lim_gap_txt, buf);
@@ -73,7 +83,7 @@ void ui_schedule_refresh(void)
             char time[8], days[40], portion[32];
             snprintf(time, sizeof(time), "%02d:%02d", e->hour, e->minute);
             ui_fmt_days(days, sizeof(days), e->dow_mask);
-            ui_fmt_portion(portion, sizeof(portion), e->on_ds, e->pulses);
+            ui_fmt_amount(portion, sizeof(portion), idx, e->on_ds, e->pulses);
             const char *attrs[] = {
                 "time", time, "days", days, "portion", portion,
                 "enabled", (e->dow_mask & FD_ENTRY_ENABLED) ? "true" : "false", NULL, NULL,
@@ -117,6 +127,18 @@ static void on_limit_changed(lv_observer_t *o, lv_subject_t *s)
     limits_dirty_ms = plat_millis() ? plat_millis() : 1;
 }
 
+/* The grams the chosen number of pulses comes to. */
+static void on_ed_pulses_changed(lv_observer_t *o, lv_subject_t *s)
+{
+    (void)o;
+    char buf[16] = "";
+    int idx = ui_sched_node_idx();
+    if (app_calibrated(idx)) {
+        ui_fmt_grams(buf, sizeof(buf), (uint32_t)app_node(idx)->mg_per_pulse * (uint32_t)lv_subject_get_int(s));
+    }
+    lv_subject_copy_string(&s_ed_grams_txt, buf);
+}
+
 static void on_ed_on_changed(lv_observer_t *o, lv_subject_t *s)
 {
     (void)o;
@@ -132,10 +154,16 @@ static void editor_open(int entry)
     if (!n) {
         return;
     }
-    fd_sched_entry_t e = { 8, 0, FD_ENTRY_ENABLED | FD_DOW_ALL, app_settings()->feed_on_ds,
+    fd_sched_entry_t e = { 8, 0, FD_ENTRY_ENABLED | FD_DOW_ALL, app_feed_on_ds(idx),
                            app_settings()->feed_pulses };
     if (entry >= 0 && entry < n->count) {
         e = n->entries[entry];
+    }
+    /* A calibrated feeder is set in grams, which only holds for its
+     * calibrated pulse length, so the editor fixes the length to that. */
+    lv_subject_set_int(&s_ed_cal, app_calibrated(idx) ? 1 : 0);
+    if (app_calibrated(idx)) {
+        e.on_ds = n->cal_on_ds;
     }
     ed_entry = entry;
     lv_subject_copy_string(&s_ed_title, entry < 0 ? "New feeding time" : "Edit feeding time");
@@ -143,6 +171,7 @@ static void editor_open(int entry)
     lv_subject_set_int(&s_ed_min, e.minute);
     lv_subject_set_int(&s_ed_on, e.on_ds);
     lv_subject_set_int(&s_ed_pulses, e.pulses);
+    lv_subject_notify(&s_ed_pulses); /* refresh the grams even if the count is unchanged */
     for (int d = 0; d < 7; d++) {
         lv_subject_set_int(&s_ed_day[d], (e.dow_mask >> d) & 1);
     }
@@ -295,6 +324,8 @@ void ui_schedule_register(void)
     INT_SUBJECT(s_ed_pulses, "ed_pulses", 1);
     STR_SUBJECT(s_ed_on_txt, "ed_on_txt", 16, "");
     STR_SUBJECT(s_ed_title, "ed_title", 24, "");
+    INT_SUBJECT(s_ed_cal, "ed_cal", 0);
+    STR_SUBJECT(s_ed_grams_txt, "ed_grams_txt", 16, "");
     static const char *const day_names[7] = { "ed_d0", "ed_d1", "ed_d2", "ed_d3", "ed_d4", "ed_d5", "ed_d6" };
     for (int d = 0; d < 7; d++) {
         lv_subject_init_int(&s_ed_day[d], 1);
@@ -318,4 +349,5 @@ void ui_schedule_attach(lv_obj_t *root)
     lv_subject_add_observer(&s_lim_daily, on_limit_changed, NULL);
     lv_subject_add_observer(&s_lim_gap, on_limit_changed, NULL);
     lv_subject_add_observer(&s_ed_on, on_ed_on_changed, NULL);
+    lv_subject_add_observer(&s_ed_pulses, on_ed_pulses_changed, NULL);
 }

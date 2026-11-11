@@ -271,9 +271,15 @@ static void sd_log(const app_log_entry_t *e)
     } else {
         snprintf(source, sizeof(source), "schedule %u", e->source + 1);
     }
-    snprintf(line, sizeof(line), "%04u-%02u-%02u %02u:%02u:%02u,%s,%s,%s,%u.%u,%u", c.year, c.month, c.day,
+    /* Grams only when the feed used the calibrated pulse length. */
+    char grams[12] = "";
+    uint32_t mg = e->pulses ? app_mg(e->node, (uint8_t)(e->on_ms / e->pulses / 100u), e->pulses) : 0;
+    if (mg) {
+        snprintf(grams, sizeof(grams), "%u.%u", (unsigned)(mg / 1000u), (unsigned)(mg % 1000u / 100u));
+    }
+    snprintf(line, sizeof(line), "%04u-%02u-%02u %02u:%02u:%02u,%s,%s,%s,%u.%u,%u,%s", c.year, c.month, c.day,
              c.hour, c.minute, c.second, name, source, e->result == FD_RES_OK ? "fed" : app_result_text(e->result),
-             e->on_ms / 1000, e->on_ms % 1000 / 100, e->pulses);
+             e->on_ms / 1000, e->on_ms % 1000 / 100, e->pulses, grams);
     plat_sd_append(APP_SD_LOG_FILE, APP_SD_LOG_HEADER, line);
 }
 
@@ -648,7 +654,7 @@ uint32_t app_next_feed(int idx, uint32_t now_epoch)
 
 /* ---- manual feed ---- */
 
-bool app_feed_now(int idx)
+bool app_feed_custom(int idx, uint8_t on_ds, uint8_t pulses)
 {
     if (feed.active || !app_node(idx)) {
         return false;
@@ -658,10 +664,50 @@ bool app_feed_now(int idx)
     feed.last_node = idx;
     feed.seq = ++tx_seq;
     feed.tries = 0;
-    feed.on_ds = settings.s.feed_on_ds;
-    feed.pulses = settings.s.feed_pulses;
+    feed.on_ds = on_ds;
+    feed.pulses = pulses;
     send_feed();
     return true;
+}
+
+bool app_feed_now(int idx)
+{
+    return app_feed_custom(idx, app_feed_on_ds(idx), settings.s.feed_pulses);
+}
+
+/* ---- calibration ---- */
+
+void app_set_calibration(int idx, uint8_t on_ds, uint32_t total_mg)
+{
+    app_node_cfg_t *n = app_node(idx);
+    if (!n) {
+        return;
+    }
+    uint32_t per = (total_mg + APP_CAL_PULSES / 2) / APP_CAL_PULSES;
+    n->mg_per_pulse = per > 0xFFFFu ? 0xFFFFu : (uint16_t)per;
+    n->cal_on_ds = n->mg_per_pulse ? on_ds : 0;
+    save_nodes();
+    changes |= APP_CH_NODES | APP_CH_SCHEDULE | APP_CH_LOG;
+}
+
+bool app_calibrated(int idx)
+{
+    const app_node_cfg_t *n = app_node(idx);
+    return n && n->mg_per_pulse != 0 && n->cal_on_ds != 0;
+}
+
+uint8_t app_feed_on_ds(int idx)
+{
+    return app_calibrated(idx) ? app_node(idx)->cal_on_ds : settings.s.feed_on_ds;
+}
+
+/* The weight is only known for pulses of the calibrated length. */
+uint32_t app_mg(int idx, uint8_t on_ds, uint32_t pulses)
+{
+    if (!app_calibrated(idx) || on_ds != app_node(idx)->cal_on_ds) {
+        return 0;
+    }
+    return (uint32_t)app_node(idx)->mg_per_pulse * pulses;
 }
 
 bool app_feed_busy(void) { return feed.active; }

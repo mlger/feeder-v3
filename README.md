@@ -102,6 +102,24 @@ mkdir -p build/shots && build/sim/feeder_sim build/shots
 To add a feeder, open **Feeders**, hold the feeder's FLASH button for 3 s and
 tap **Add** when it appears. The HMI then sends it the time and its schedule.
 
+### Portions in grams
+
+The feeder has no scale. To work in grams, calibrate each feeder once:
+**Feeders > Calibrate** runs 10 pulses into a cup, you weigh the food and
+enter the weight. The controller stores grams-per-pulse for that feeder and
+from then on shows and takes portions in grams (schedule editor, Feed now,
+Home, History, the daily limit and the SD-card log).
+
+- Portions move in steps of one pulse.
+- Grams are only claimed for feeds that use the calibrated pulse length;
+  the schedule editor fixes the pulse length for a calibrated feeder.
+- The run is a normal manual feed: the cooldown and daily limit apply, and
+  it counts towards the day's total.
+- It is an estimate. Re-calibrate when the food changes. Entering 0 removes
+  the calibration.
+- The conversion lives on the controller only. Feeders still receive pulses,
+  so their hard limits work exactly as before.
+
 ### Network page
 
 | Card | What it does |
@@ -154,9 +172,9 @@ With a FAT-formatted card in the controller's slot, every feed and every
 refused feed is appended to `feedlog.csv`:
 
 ```
-time,feeder,source,result,seconds,pulses
-2026-11-09 08:00:00,"Goldfish",schedule 1,fed,1.0,1
-2026-11-09 08:01:12,"Tetras",manual,Skipped: cooldown,0.0,0
+time,feeder,source,result,seconds,pulses,grams
+2026-11-09 08:00:00,"Goldfish",schedule 1,fed,1.0,1,0.6
+2026-11-09 08:01:12,"Tetras",manual,Skipped: cooldown,0.0,0,
 ```
 
 The History page shows whether a card is in use, and the update web page has

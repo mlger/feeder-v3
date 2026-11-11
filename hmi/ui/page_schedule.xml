@@ -26,7 +26,7 @@
         <lv_label text="Safety limits" flex_grow="1"/>
         <stepper title="Cooldown" w="144" subject="lim_cool" display="lim_cool_txt" fmt="%s"
                  step="5" min="0" max="240"/>
-        <stepper title="Daily limit" w="144" subject="lim_daily" display="lim_daily_txt" fmt="%s"
+        <stepper title="Daily limit" w="190" subject="lim_daily" display="lim_daily_txt" fmt="%s"
                  step="5" min="0" max="600"/>
         <stepper title="Pulse gap" w="144" subject="lim_gap" display="lim_gap_txt" fmt="%s"
                  step="1" min="2" max="50"/>

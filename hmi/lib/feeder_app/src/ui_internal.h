@@ -6,6 +6,7 @@
  *                  Feeders, History and Settings pages
  *   ui_schedule.c  the Schedule page and the feeding-time editor
  *   ui_network.c   the Network page: Wi-Fi, internet time, updates
+ *   ui_calibrate.c the grams calibration dialog
  *   ui_format.c    text formatting
  */
 #ifndef FEEDER_UI_INTERNAL_H
@@ -63,6 +64,14 @@ void ui_schedule_refresh(void);
 void ui_schedule_tick(void);
 int  ui_sched_node_idx(void);             /* feeder slot chosen on the Schedule page */
 
+/* ---- ui_calibrate.c ---- */
+
+void ui_calibrate_register(void);
+void ui_calibrate_open(int idx);
+/* A manual feed got its answer. Returns true if it belonged to a running
+ * calibration, which then shows its own message. */
+bool ui_calibrate_feed_result(int idx, uint8_t result);
+
 /* ---- ui_network.c ---- */
 
 void ui_network_register(void);
@@ -80,5 +89,9 @@ void ui_fmt_when(char *buf, size_t n, uint32_t epoch, bool relative);
 void ui_fmt_ds(char *buf, size_t n, int ds);            /* tenths of a second -> "1.5 s" */
 void ui_fmt_days(char *buf, size_t n, uint8_t mask);    /* "Every day", "Weekdays", "Mon Wed" */
 void ui_fmt_portion(char *buf, size_t n, uint8_t on_ds, uint8_t pulses);
+void ui_fmt_grams(char *buf, size_t n, uint32_t mg);     /* "1.8 g" */
+/* A portion on feeder `idx`: grams if it is calibrated for that pulse
+ * length ("1.8 g"), otherwise pulses and seconds. */
+void ui_fmt_amount(char *buf, size_t n, int idx, uint8_t on_ds, uint8_t pulses);
 
 #endif

@@ -249,9 +249,9 @@ int main(int argc, char **argv)
 
     printf("SD card log\n");
     CHECK(sd_lines == app_log_count(), "every history event was written to the SD card");
-    CHECK(strcmp(sd_last_header, "time,feeder,source,result,seconds,pulses") == 0, "CSV header is right");
+    CHECK(strcmp(sd_last_header, "time,feeder,source,result,seconds,pulses,grams") == 0, "CSV header is right");
     CHECK(strncmp(sd_last_line, "2026-11-09 08:00:", 17) == 0 &&
-          strcmp(sd_last_line + 19, ",\"Tank 2\",manual,fed,1.0,1") == 0, "CSV line is as expected");
+          strcmp(sd_last_line + 19, ",\"Tank 2\",manual,fed,1.0,1,") == 0, "CSV line is as expected (no grams yet)");
     printf("    last line: %s\n", sd_last_line);
     CHECK(strstr(lv_subject_get_string(lv_xml_get_subject(NULL, "log_summary")), "SD card: logging") != NULL,
           "History shows that the SD card is logging");
@@ -361,6 +361,66 @@ int main(int argc, char **argv)
     CHECK(!updates_allowed, "uploads are refused again after 10 minutes");
     lv_display_trigger_activity(NULL);
     run(500);
+
+    printf("Grams calibration\n");
+    lv_subject_t *cal_step = lv_xml_get_subject(NULL, "cal_step");
+    int pulses_before = fnodes[0].relay_pulses;
+    ui_show_page(2);
+    run(500);
+    click("Calibrate", 0);
+    shot("19a_calibrate");
+    click("Run", 0);
+    run(1500);
+    CHECK(lv_subject_get_int(cal_step) == 2, "the dialog asks for the weight once the feeder accepted");
+    run(20000);
+    CHECK(fnodes[0].relay_pulses - pulses_before == APP_CAL_PULSES, "the feeder ran the calibration pulses");
+    lv_subject_set_int(lv_xml_get_subject(NULL, "cal_grams"), 60); /* the cup weighed 6.0 g */
+    shot("19b_calibrate_weight");
+    click("Save", 0);
+    CHECK(app_calibrated(0) && app_node(0)->mg_per_pulse == 600 && app_node(0)->cal_on_ds == 10,
+          "10 pulses weighing 6.0 g gives 0.6 g per pulse");
+    CHECK(app_mg(0, 10, 3) == 1800 && app_mg(0, 20, 3) == 0, "grams are only claimed for the calibrated pulse length");
+    CHECK(!app_calibrated(1), "the other feeder is not affected");
+
+    ui_show_page(1);
+    run(500);
+    click(LV_SYMBOL_EDIT, 1); /* the weekday 18:30 entry: 3 pulses */
+    CHECK(lv_subject_get_int(lv_xml_get_subject(NULL, "ed_cal")) == 1 &&
+          strcmp(lv_subject_get_string(lv_xml_get_subject(NULL, "ed_grams_txt")), "1.8 g") == 0,
+          "the schedule editor shows the portion in grams");
+    shot("19c_editor_grams");
+    click("Cancel", 0);
+    ui_show_page(0);
+    run(500);
+    shot("19d_home_grams");
+
+    ui_show_page(2);
+    run(500);
+    click("Calibrate", 0);
+    click("Run", 0);
+    run(1500);
+    CHECK(lv_subject_get_int(cal_step) == 0 &&
+          strstr(lv_subject_get_string(lv_xml_get_subject(NULL, "cal_text")), "cooldown") != NULL,
+          "a second run straight away is refused by the cooldown, and says so");
+    CHECK(app_node(0)->mg_per_pulse == 600, "a refused run leaves the calibration alone");
+    click("Cancel", 0);
+
+    run(11 * 60000); /* past the cooldown */
+    lv_display_trigger_activity(NULL);
+    ui_show_page(0);
+    run(500);
+    click("Feed now", 0);
+    shot("19e_feed_confirm_grams");
+    click("Feed", 0);
+    run(3000);
+    click("OK", 0);
+    run(4000);
+    CHECK(strstr(sd_last_line, ",\"Goldfish\",manual,fed,1.0,1,0.6") != NULL, "the SD log line carries the grams");
+    printf("    last line: %s\n", sd_last_line);
+
+    app_set_calibration(0, 10, 0);
+    CHECK(!app_calibrated(0) && app_feed_on_ds(0) == app_settings()->feed_on_ds, "entering 0 g removes the calibration");
+    app_set_calibration(0, 10, 6000);
 
     printf("Light theme\n");
     lv_subject_set_int(lv_xml_get_subject(NULL, "dark"), 0);

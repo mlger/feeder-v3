@@ -68,6 +68,10 @@ static void demo_setup(void)
     n->count = 2;
     app_schedule_changed(a);
 
+    /* The first feeder is calibrated (0.6 g per pulse), the second is not,
+     * so both ways of showing a portion can be seen. */
+    app_set_calibration(a, 10, 6000);
+
     n = app_node(b);
     memcpy(n->entries, tank2, sizeof(tank2));
     n->count = 3;

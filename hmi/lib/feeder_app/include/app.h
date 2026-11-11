@@ -36,6 +36,10 @@ typedef struct {
     fd_limits_t      limits;
     uint8_t          count;
     fd_sched_entry_t entries[FD_MAX_ENTRIES];
+    /* Calibration: food per pulse, measured by the user with pulses of
+     * cal_on_ds. mg_per_pulse == 0 means not calibrated. */
+    uint16_t         mg_per_pulse;
+    uint8_t          cal_on_ds;
 } app_node_cfg_t;
 
 /* Runtime state per node. */
@@ -112,8 +116,20 @@ void app_schedule_changed(int idx);
 /* Local epoch of the node's next scheduled feed, 0 if none. */
 uint32_t app_next_feed(int idx, uint32_t now_epoch);
 
+/* ---- calibration (grams) ---- */
+#define APP_CAL_PULSES 10 /* pulses dispensed for a calibration run */
+
+/* Store what APP_CAL_PULSES pulses of `on_ds` weighed; 0 clears it. */
+void app_set_calibration(int idx, uint8_t on_ds, uint32_t total_mg);
+bool app_calibrated(int idx);
+/* Pulse length a manual or new scheduled feed uses on this feeder. */
+uint8_t app_feed_on_ds(int idx);
+/* Milligrams for `pulses` of `on_ds`, or 0 if that is not known. */
+uint32_t app_mg(int idx, uint8_t on_ds, uint32_t pulses);
+
 /* ---- manual feed ---- */
 bool    app_feed_now(int idx); /* false if another request is in flight */
+bool    app_feed_custom(int idx, uint8_t on_ds, uint8_t pulses);
 bool    app_feed_busy(void);
 int     app_feed_last_node(void);
 uint8_t app_feed_last_result(void); /* fd_result_t or APP_FEED_NO_REPLY */
@@ -144,7 +160,7 @@ void            app_settings_save(void);
 
 /* Every feed event is also appended to this file on the SD card. */
 #define APP_SD_LOG_FILE   "feedlog.csv"
-#define APP_SD_LOG_HEADER "time,feeder,source,result,seconds,pulses"
+#define APP_SD_LOG_HEADER "time,feeder,source,result,seconds,pulses,grams"
 
 /* Text for a feed result code. */
 const char *app_result_text(uint8_t result);

@@ -154,9 +154,19 @@ static void refresh_home(void)
         if (r->have_status) {
             ui_fmt_when(when, sizeof(when), r->status.last_feed_epoch, true);
             snprintf(last, sizeof(last), "Last fed: %s", when);
-            snprintf(today, sizeof(today), "Today: %u feed%s, %u.%u s", r->status.feeds_today,
-                     r->status.feeds_today == 1 ? "" : "s", (unsigned)(r->status.on_ms_today / 1000),
-                     (unsigned)(r->status.on_ms_today % 1000 / 100));
+            /* In grams when calibrated; this assumes today's feeds used the
+             * calibrated pulse length, hence "about". */
+            char amount[24];
+            if (app_calibrated(i)) {
+                char g[16];
+                ui_fmt_grams(g, sizeof(g), r->status.on_ms_today / (n->cal_on_ds * 100u) * n->mg_per_pulse);
+                snprintf(amount, sizeof(amount), "about %s", g);
+            } else {
+                snprintf(amount, sizeof(amount), "%u.%u s", (unsigned)(r->status.on_ms_today / 1000),
+                         (unsigned)(r->status.on_ms_today % 1000 / 100));
+            }
+            snprintf(today, sizeof(today), "Today: %u feed%s, %s", r->status.feeds_today,
+                     r->status.feeds_today == 1 ? "" : "s", amount);
         } else {
             snprintf(last, sizeof(last), "Last fed: unknown");
             snprintf(today, sizeof(today), "Today: unknown");
@@ -191,12 +201,16 @@ static void refresh_nodes(void)
         const app_node_rt_t *r = app_node_rt(i);
         const char *state, *color;
         node_state(i, &state, &color);
-        char detail[64];
+        char detail[96];
         int len = snprintf(detail, sizeof(detail), "%02X:%02X:%02X:%02X:%02X:%02X", n->mac[0], n->mac[1],
                            n->mac[2], n->mac[3], n->mac[4], n->mac[5]);
         if (r->have_status) {
-            snprintf(detail + len, sizeof(detail) - (size_t)len, "   firmware %u.%u", r->status.fw_major,
-                     r->status.fw_minor);
+            len += snprintf(detail + len, sizeof(detail) - (size_t)len, "   firmware %u.%u", r->status.fw_major,
+                            r->status.fw_minor);
+        }
+        if (app_calibrated(i) && len < (int)sizeof(detail)) {
+            snprintf(detail + len, sizeof(detail) - (size_t)len, "   %u.%02u g per pulse", n->mg_per_pulse / 1000,
+                     n->mg_per_pulse % 1000 / 10);
         }
         const char *attrs[] = {
             "name", n->name, "detail", detail, "state", state, "state_color", color, NULL, NULL,
@@ -261,7 +275,14 @@ void ui_history_refresh(void)
         }
         char result[48];
         if (e->result == FD_RES_OK) {
-            snprintf(result, sizeof(result), "Fed %u.%u s", e->on_ms / 1000, e->on_ms % 1000 / 100);
+            char amount[32];
+            uint32_t mg = e->pulses ? app_mg(e->node, (uint8_t)(e->on_ms / e->pulses / 100u), e->pulses) : 0;
+            if (mg) {
+                ui_fmt_grams(amount, sizeof(amount), mg);
+            } else {
+                snprintf(amount, sizeof(amount), "%u.%u s", e->on_ms / 1000, e->on_ms % 1000 / 100);
+            }
+            snprintf(result, sizeof(result), "Fed %s", amount);
         } else {
             snprintf(result, sizeof(result), "%s", app_result_text(e->result));
         }
@@ -382,12 +403,15 @@ static void on_feed_click(lv_event_t *e)
         return;
     }
     char title[40], text[96], portion[32];
-    const app_settings_t *st = app_settings();
-    ui_fmt_portion(portion, sizeof(portion), st->feed_on_ds, st->feed_pulses);
+    uint8_t pulses = app_settings()->feed_pulses;
+    ui_fmt_amount(portion, sizeof(portion), idx, app_feed_on_ds(idx), pulses);
     snprintf(title, sizeof(title), "Feed %s now?", n->name);
-    snprintf(text, sizeof(text), "The feeder will run %s.", portion);
+    snprintf(text, sizeof(text), app_calibrated(idx) ? "The feeder will give about %s." : "The feeder will run %s.",
+             portion);
     ui_dialog_open(DLG_FEED, idx, title, text, "Feed");
 }
+
+static void on_node_calibrate(lv_event_t *e) { ui_calibrate_open(ui_row_index_of(e)); }
 
 static void on_node_remove(lv_event_t *e)
 {
@@ -546,7 +570,7 @@ static void ui_tick(lv_timer_t *t)
     if (ch & APP_CH_LOG) {
         ui_history_refresh();
     }
-    if (ch & APP_CH_FEED) {
+    if ((ch & APP_CH_FEED) && !ui_calibrate_feed_result(app_feed_last_node(), app_feed_last_result())) {
         const app_node_cfg_t *n = app_node(app_feed_last_node());
         uint8_t res = app_feed_last_result();
         char text[80];
@@ -583,7 +607,7 @@ static void register_xml(void)
     static const char *const order[] = {
         "globals", "row", "col", "nav_button", "stepper", "tank_card", "sched_row", "node_row",
         "found_row", "hist_row", "page_home", "page_schedule", "page_nodes", "page_history",
-        "page_settings", "wifi_row", "page_network", "sched_editor", "dialog", "text_dialog",
+        "page_settings", "wifi_row", "page_network", "sched_editor", "dialog", "text_dialog", "cal_dialog",
         "setup_dialog", "main",
     };
     for (size_t i = 0; i < sizeof(order) / sizeof(order[0]); i++) {
@@ -627,6 +651,7 @@ void ui_init(void)
 
     lv_xml_register_event_cb(NULL, "on_feed_click", on_feed_click);
     lv_xml_register_event_cb(NULL, "on_node_remove", on_node_remove);
+    lv_xml_register_event_cb(NULL, "on_node_calibrate", on_node_calibrate);
     lv_xml_register_event_cb(NULL, "on_node_rename", on_node_rename);
     lv_xml_register_event_cb(NULL, "on_found_add", on_found_add);
     lv_xml_register_event_cb(NULL, "on_log_clear", on_log_clear);
@@ -635,6 +660,7 @@ void ui_init(void)
     lv_xml_register_event_cb(NULL, "on_dialog_cancel", on_dialog_cancel);
 
     ui_schedule_register();
+    ui_calibrate_register();
     ui_network_register();
 
     apply_theme();

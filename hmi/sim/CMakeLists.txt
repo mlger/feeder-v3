@@ -38,6 +38,7 @@ set(APP_SRC
     ${HMI}/lib/feeder_app/src/ui_schedule.c
     ${HMI}/lib/feeder_app/src/ui_network.c
     ${HMI}/lib/feeder_app/src/ui_format.c
+    ${HMI}/lib/feeder_app/src/ui_calibrate.c
     ${CORE}/src/core.c
     ${CORE}/src/node.c
     ${XML_GEN})

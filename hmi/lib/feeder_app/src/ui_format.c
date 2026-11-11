@@ -58,3 +58,18 @@ void ui_fmt_portion(char *buf, size_t n, uint8_t on_ds, uint8_t pulses)
         snprintf(buf, n, "%d pulses of %d.%d s", pulses, on_ds / 10, on_ds % 10);
     }
 }
+
+void ui_fmt_grams(char *buf, size_t n, uint32_t mg)
+{
+    snprintf(buf, n, "%u.%u g", (unsigned)(mg / 1000u), (unsigned)((mg % 1000u + 50u) / 100u % 10u));
+}
+
+void ui_fmt_amount(char *buf, size_t n, int idx, uint8_t on_ds, uint8_t pulses)
+{
+    uint32_t mg = app_mg(idx, on_ds, pulses);
+    if (mg) {
+        ui_fmt_grams(buf, n, mg);
+    } else {
+        ui_fmt_portion(buf, n, on_ds, pulses);
+    }
+}
