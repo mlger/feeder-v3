@@ -4,20 +4,18 @@
 #include <stdio.h>
 #include <string.h>
 
-#define UPDATES_WINDOW_MS (10u * 60u * 1000u)
 #define MAX_APS 8
 #define SETUP_WINDOW_MS (5u * 60u * 1000u)
 #define SETUP_LINGER_MS 3000u /* let the phone receive its answer */
 
 static lv_subject_t s_setup_text;
-static lv_subject_t s_wifi_status, s_ntp_on, s_ntp_status, s_utc_off, s_utc_txt, s_ota_allow, s_ota_status;
+static lv_subject_t s_wifi_status, s_ntp_on, s_ntp_status, s_utc_off, s_utc_txt, s_ota_status;
 
 static lv_obj_t *wifi_list;
 static plat_ap_t aps[MAX_APS];
 static int  ap_count;
 static bool scanning;
 static char wifi_pick[33];
-static uint32_t updates_since_ms; /* when uploads were allowed; 0 = not allowed */
 static lv_obj_t *setup_modal;     /* the phone set-up dialog while its access point is open */
 static uint32_t setup_since_ms, setup_done_ms;
 static bool sd_was_ready;
@@ -143,18 +141,14 @@ void ui_network_refresh(void)
     }
     set_text(&s_ntp_status, buf);
 
-    if (updates_since_ms && plat_millis() - updates_since_ms > UPDATES_WINDOW_MS) {
-        lv_subject_set_int(&s_ota_allow, 0); /* the observer closes the window */
-    }
     const app_node_cfg_t *on = app_node(app_ota_node());
     if (app_ota_state() == APP_OTA_RUNNING) {
         snprintf(buf, sizeof(buf), "Updating %s. Leave it powered.", on ? on->name : "feeder");
     } else if (ws != PLAT_WIFI_CONNECTED) {
         snprintf(buf, sizeof(buf), "Needs Wi-Fi.");
-    } else if (!updates_since_ms) {
-        snprintf(buf, sizeof(buf), "Switch on, then open http://%s in a browser on the same network.", ip);
     } else {
-        snprintf(buf, sizeof(buf), "Uploads allowed for 10 minutes at http://%s", ip);
+        /* Open to the whole network on purpose: say so. */
+        snprintf(buf, sizeof(buf), "Open http://%s to upload firmware. There is no password: anyone on this network can.", ip);
     }
     set_text(&s_ota_status, buf);
 
@@ -183,9 +177,9 @@ void ui_network_publish_status(void)
     static const char *const ota_names[] = { "idle", "running", "done", "failed" };
     char json[700];
     int n = snprintf(json, sizeof(json),
-                     "{\"version\":\"" APP_VERSION "\",\"allow\":%s,\"node_fw\":%u,"
+                     "{\"version\":\"" APP_VERSION "\",\"node_fw\":%u,"
                      "\"ota\":\"%s\",\"ota_node\":%d,\"ota_msg\":\"%s\",\"nodes\":[",
-                     updates_since_ms ? "true" : "false", (unsigned)plat_node_fw_size(),
+                     (unsigned)plat_node_fw_size(),
                      ota_names[app_ota_state()], app_ota_node(), app_ota_message());
     bool first = true;
     for (int i = 0; i < APP_MAX_NODES && n < (int)sizeof(json) - 80; i++) {
@@ -270,14 +264,6 @@ static void on_network_changed(lv_observer_t *o, lv_subject_t *s)
     app_settings_save();
 }
 
-static void on_ota_allow_changed(lv_observer_t *o, lv_subject_t *s)
-{
-    (void)o;
-    bool on = lv_subject_get_int(s) != 0;
-    updates_since_ms = on ? (plat_millis() ? plat_millis() : 1) : 0;
-    plat_updates_allow(on);
-}
-
 void ui_network_register(void)
 {
     const app_settings_t *st = app_settings();
@@ -286,7 +272,6 @@ void ui_network_register(void)
     STR_SUBJECT(s_ntp_status, "ntp_status", 128, "");
     INT_SUBJECT(s_utc_off, "utc_off", st->utc_offset_min);
     STR_SUBJECT(s_utc_txt, "utc_txt", 16, "");
-    INT_SUBJECT(s_ota_allow, "ota_allow", 0);
     STR_SUBJECT(s_ota_status, "ota_status", 128, "");
     STR_SUBJECT(s_setup_text, "setup_text", 200, "");
 
@@ -302,5 +287,4 @@ void ui_network_attach(lv_obj_t *root)
     wifi_list = lv_obj_find_by_name(root, "wifi_list");
     lv_subject_add_observer(&s_utc_off, on_network_changed, NULL);
     lv_subject_add_observer(&s_ntp_on, on_network_changed, NULL);
-    lv_subject_add_observer(&s_ota_allow, on_ota_allow_changed, NULL);
 }

@@ -73,9 +73,6 @@ void plat_sd_append(const char *file, const char *header, const char *line);
 
 /* ---- firmware updates ---- */
 
-/* Allow or refuse firmware uploads on the built-in web page. */
-void plat_updates_allow(bool on);
-
 /* Size of the feeder firmware uploaded through the web page, 0 if none. */
 uint32_t plat_node_fw_size(void);
 

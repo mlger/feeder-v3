@@ -4,8 +4,11 @@
     <prop name="label" type="string"/>
     <prop name="index" type="int"/>
   </api>
+  <!-- Icon and label stacked and centred in the button. The track setting is what
+     centres them horizontally: without it LVGL packs the column against the left. -->
   <view extends="lv_button" width="100%" height="70" flex_flow="column"
-        style_flex_main_place="center" style_flex_cross_place="center">
+        style_flex_main_place="center" style_flex_cross_place="center"
+        style_flex_track_place="center">
     <style name="nav"/>
     <style name="nav_on" selector="checked"/>
     <subject_set_int_event trigger="clicked" subject="page" value="$index"/>

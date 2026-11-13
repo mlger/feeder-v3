@@ -13,7 +13,7 @@
           <lv_label text="1. Zero" align="center"/>
         </lv_button>
         <stepper title="Known weight" w="170" subject="scale_known" display="scale_known_txt" fmt="%s"
-                 step="10" min="10" max="2000"/>
+                 step="10" neg_step="-10" min="10" max="2000"/>
         <lv_button width="150" height="48">
           <event_cb callback="on_scale_span" trigger="clicked"/>
           <lv_label text="2. Set weight" align="center"/>

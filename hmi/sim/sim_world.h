@@ -48,7 +48,7 @@ void sim_node_prepair(int i, uint8_t node_id);
 int32_t sim_node_clock_error(int i);
 
 extern uint32_t now_ms;
-extern bool ntp_on, ntp_synced, updates_allowed;
+extern bool ntp_on, ntp_synced;
 extern char last_status[800];
 extern int saves;
 extern bool backlight;

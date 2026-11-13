@@ -6,6 +6,10 @@
     <prop name="display" type="string"/>
     <prop name="fmt" type="string" default="%d"/>
     <prop name="step" type="int" default="1"/>
+    <!-- Minus the step. XML cannot negate a parameter ("-$step" is not
+         substituted and reads as 0), so a stepper whose step is not 1 must
+         pass this as well. tests: sim checks every stepper both ways. -->
+    <prop name="neg_step" type="int" default="-1"/>
     <prop name="min" type="int" default="0"/>
     <prop name="max" type="int" default="100"/>
     <prop name="rollover" type="bool" default="false"/>
@@ -21,9 +25,9 @@
             style_flex_main_place="space_between" scrollable="false">
       <style name="plain"/>
       <lv_button width="36" height="40" style_pad_all="0">
-        <subject_increment_event trigger="clicked" subject="$subject" step="-$step"
+        <subject_increment_event trigger="clicked" subject="$subject" step="$neg_step"
                                  min_value="$min" max_value="$max" rollover="$rollover"/>
-        <subject_increment_event trigger="long_pressed_repeat" subject="$subject" step="-$step"
+        <subject_increment_event trigger="long_pressed_repeat" subject="$subject" step="$neg_step"
                                  min_value="$min" max_value="$max" rollover="$rollover"/>
         <lv_label text="-" align="center" style_text_font="font_l"/>
       </lv_button>

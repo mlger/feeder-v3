@@ -40,7 +40,7 @@
         </lv_label>
       </col>
       <stepper title="UTC offset" w="160" subject="utc_off" display="utc_txt" fmt="%s"
-               step="15" min="-720" max="840"/>
+               step="15" neg_step="-15" min="-720" max="840"/>
       <lv_switch width="60" height="32" bind_checked="ntp_on"/>
     </lv_obj>
 
@@ -52,7 +52,6 @@
           <style name="muted"/>
         </lv_label>
       </col>
-      <lv_switch width="60" height="32" bind_checked="ota_allow"/>
     </lv_obj>
   </view>
 </component>

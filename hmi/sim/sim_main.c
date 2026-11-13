@@ -31,6 +31,16 @@ static uint16_t fb[W * H];
 static const char *out_dir = ".";
 static int problems;
 
+/* A pointer the test can hold down, in an empty corner of the screen. */
+static bool finger_down;
+static void pointer_cb(lv_indev_t *indev, lv_indev_data_t *data)
+{
+    (void)indev;
+    data->point.x = W - 5;
+    data->point.y = H - 5;
+    data->state = finger_down ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+}
+
 static void flush_cb(lv_display_t *d, const lv_area_t *a, uint8_t *px)
 {
     (void)a; (void)px;
@@ -133,6 +143,116 @@ static bool click(const char *text, int n)
     return true;
 }
 
+/* ---- steppers: every "-" and "+" must really change the value ---- */
+
+static bool is_button_with(lv_obj_t *o, const char *text)
+{
+    if (!lv_obj_check_type(o, &lv_button_class)) {
+        return false;
+    }
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+        lv_obj_t *c = lv_obj_get_child(o, (int32_t)i);
+        if (lv_obj_check_type(c, &lv_label_class) && strcmp(lv_label_get_text(c), text) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static int stepper_total, stepper_bad;
+
+/* A stepper row is [-] value [+]. Each button must move the value, and +
+ * must undo -. At a limit one of them can legitimately do nothing, so the
+ * button that can move is pressed first. The value ends where it started. */
+static void check_stepper_row(lv_obj_t *minus, lv_obj_t *label, lv_obj_t *plus, const char *where)
+{
+    char t0[40], t1[40], t2[40];
+    snprintf(t0, sizeof(t0), "%s", lv_label_get_text(label));
+    lv_obj_send_event(plus, LV_EVENT_CLICKED, NULL);
+    snprintf(t1, sizeof(t1), "%s", lv_label_get_text(label));
+    bool ok;
+    if (strcmp(t1, t0) != 0) {
+        /* "+" moved it: "-" has to bring it back. */
+        lv_obj_send_event(minus, LV_EVENT_CLICKED, NULL);
+        snprintf(t2, sizeof(t2), "%s", lv_label_get_text(label));
+        ok = strcmp(t2, t0) == 0;
+    } else {
+        /* At the maximum (or "+" is dead): "-" has to move it, "+" has to restore it. */
+        lv_obj_send_event(minus, LV_EVENT_CLICKED, NULL);
+        snprintf(t2, sizeof(t2), "%s", lv_label_get_text(label));
+        ok = strcmp(t2, t0) != 0;
+        lv_obj_send_event(plus, LV_EVENT_CLICKED, NULL);
+        char t3[40];
+        snprintf(t3, sizeof(t3), "%s", lv_label_get_text(label));
+        ok = ok && strcmp(t3, t0) == 0;
+    }
+    stepper_total++;
+    if (!ok) {
+        printf("  FAIL  stepper in %s: start \"%s\", then \"%s\", then \"%s\"\n", where, t0, t1, t2);
+        stepper_bad++;
+        problems++;
+    }
+}
+
+static void walk_steppers(lv_obj_t *o, const char *where)
+{
+    if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) {
+        return;
+    }
+    if (lv_obj_get_child_count(o) == 3) {
+        lv_obj_t *a = lv_obj_get_child(o, 0), *m = lv_obj_get_child(o, 1), *b = lv_obj_get_child(o, 2);
+        if (is_button_with(a, "-") && is_button_with(b, "+") && lv_obj_check_type(m, &lv_label_class)) {
+            check_stepper_row(a, m, b, where);
+        }
+    }
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+        walk_steppers(lv_obj_get_child(o, (int32_t)i), where);
+    }
+}
+
+/* Check the steppers of what is on screen: the open dialog if there is one,
+ * otherwise the page. */
+static void check_steppers(const char *where, int expect_at_least)
+{
+    int before = stepper_total;
+    if (lv_obj_get_child_count(lv_layer_top()) > 0) {
+        walk_steppers(lv_layer_top(), where);
+    } else {
+        walk_steppers(lv_screen_active(), where);
+    }
+    char what[96];
+    snprintf(what, sizeof(what), "%s: found at least %d stepper(s) to test", where, expect_at_least);
+    CHECK(stepper_total - before >= expect_at_least, what);
+}
+
+/* The nav buttons: icon and label must be centred on the button. */
+static void check_nav_alignment(void)
+{
+    static const char *const names[] = { "Home", "Schedule", "Feeders", "History", "Settings", "Network" };
+    int off = 0;
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        int k = 0;
+        lv_obj_t *b = find_button(lv_screen_active(), names[i], &k);
+        if (!b) {
+            off++;
+            continue;
+        }
+        lv_obj_update_layout(b);
+        lv_area_t ba;
+        lv_obj_get_coords(b, &ba);
+        for (uint32_t c = 0; c < lv_obj_get_child_count(b); c++) {
+            lv_area_t ca;
+            lv_obj_get_coords(lv_obj_get_child(b, (int32_t)c), &ca);
+            int d = (ca.x1 + ca.x2) / 2 - (ba.x1 + ba.x2) / 2;
+            if (d < -2 || d > 2) {
+                printf("  nav \"%s\": child %u is %d px off centre\n", names[i], (unsigned)c, d);
+                off++;
+            }
+        }
+    }
+    CHECK(off == 0, "nav icons and labels are centred in their buttons");
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1) {
@@ -145,6 +265,9 @@ int main(int argc, char **argv)
     lv_display_t *disp = lv_display_create(W, H);
     lv_display_set_buffers(disp, fb, NULL, sizeof(fb), LV_DISPLAY_RENDER_MODE_DIRECT);
     lv_display_set_flush_cb(disp, flush_cb);
+    lv_indev_t *indev = lv_indev_create();
+    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(indev, pointer_cb);
 
     app_init();
     ui_init();
@@ -336,9 +459,7 @@ int main(int argc, char **argv)
     printf("Feeder firmware update\n");
     CHECK(app_node_ota_start(0) != NULL, "refused while no firmware is uploaded");
     node_fw_size = 312000;
-    lv_subject_set_int(lv_xml_get_subject(NULL, "ota_allow"), 1);
     run(500);
-    CHECK(updates_allowed, "uploads are allowed after the switch");
     node_ota_request = 0; /* "Update" pressed on the web page */
     run(1000);
     CHECK(app_ota_state() == APP_OTA_RUNNING && ota_ap_open, "update started, access point open");
@@ -359,8 +480,6 @@ int main(int argc, char **argv)
     CHECK(strstr(last_status, "\"ota\":\"failed\"") && strstr(last_status, "\"name\":\"Goldfish\""),
           "web status carries the feeders and the update state");
 
-    run(10 * 60000);
-    CHECK(!updates_allowed, "uploads are refused again after 10 minutes");
     lv_display_trigger_activity(NULL);
     run(500);
 
@@ -520,6 +639,74 @@ int main(int argc, char **argv)
     fnodes[0].hopper_mg = 180000;
     run(12000);
     CHECK(lv_subject_get_string(alert)[0] == '\0', "refilling clears it");
+
+    printf("Left navbar\n");
+    check_nav_alignment();
+
+    printf("Every - and + button works\n");
+    ui_show_page(4);
+    run(500);
+    check_steppers("Settings", 8);
+    ui_show_page(1);
+    run(500);
+    check_steppers("Schedule limits", 3);
+    ui_show_page(5);
+    run(500);
+    check_steppers("Network", 1);
+    ui_show_page(1);
+    run(500);
+    click(LV_SYMBOL_PLUS "  Add feeding time", 0);
+    check_steppers("schedule editor", 1);
+    click("Cancel", 0);
+    ui_show_page(2);
+    run(500);
+    click("Calibrate", 0);
+    check_steppers("calibration dialog", 1);
+    click("Scale", 0);
+    check_steppers("scale dialog", 1);
+    click("Close", 0);
+    CHECK(stepper_bad == 0, "no stepper has a dead or lopsided button");
+
+    printf("Feeders page\n");
+    ui_show_page(2);
+    run(500);
+    {
+        run(20000); /* the limits pushed by the stepper checks have reached the feeders */
+        int k = 0;
+        lv_obj_t *cal = find_button(lv_screen_active(), "Calibrate", &k);
+        lv_obj_set_user_data(cal, (void *)0xBEEF); /* a marker that a rebuilt button would not have */
+        run(25000);                                /* feeders keep reporting status meanwhile */
+        k = 0;
+        cal = find_button(lv_screen_active(), "Calibrate", &k);
+        CHECK(cal && lv_obj_get_user_data(cal) == (void *)0xBEEF,
+              "status messages do not rebuild the Feeders list when nothing changed");
+
+        /* While a finger is down nothing may be deleted under it, even if the
+         * text did change. */
+        finger_down = true;
+        run(100);
+        app_rename_node(1, "Renamed");
+        run(1500);
+        k = 0;
+        cal = find_button(lv_screen_active(), "Calibrate", &k);
+        CHECK(cal && lv_obj_get_user_data(cal) == (void *)0xBEEF, "the list is left alone while a finger is down");
+        finger_down = false;
+        run(1500);
+        k = 0;
+        cal = find_button(lv_screen_active(), "Calibrate", &k);
+        CHECK(cal && lv_obj_get_user_data(cal) != (void *)0xBEEF, "and brought up to date once the finger lifts");
+        app_rename_node(1, "Tetras");
+        run(1000);
+    }
+    click("Remove", 1); /* the second feeder */
+    click("Remove", 0); /* confirm in the dialog */
+    CHECK(app_node_count() == 1, "removing a feeder takes it off the list");
+    run(12000);
+    CHECK(app_found(0) != NULL, "the removed feeder shows up again under Discovered");
+    click("Add", 0);
+    run(30000);
+    CHECK(app_node_count() == 2 && app_node_online(1), "and can be added again");
+    shot("19j_feeders_readded");
 
     printf("Light theme\n");
     lv_subject_set_int(lv_xml_get_subject(NULL, "dark"), 0);

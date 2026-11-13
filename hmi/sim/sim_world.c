@@ -35,7 +35,7 @@ void plat_set_utc_offset(int16_t minutes) { utc_offset = minutes * 60; }
 static plat_wifi_state_t wifi_state = PLAT_WIFI_IDLE;
 static char wifi_ssid[33];
 static uint32_t wifi_since_ms, scan_since_ms;
-bool ntp_on, ntp_synced, updates_allowed;
+bool ntp_on, ntp_synced;
 char last_status[800];
 
 plat_wifi_state_t plat_wifi_state(void) { return wifi_state; }
@@ -67,7 +67,6 @@ int plat_wifi_scan_get(plat_ap_t *out, int max)
 }
 void plat_ntp_enable(bool on) { ntp_on = on; if (!on) ntp_synced = false; }
 bool plat_ntp_synced(void) { return ntp_synced; }
-void plat_updates_allow(bool on) { updates_allowed = on; }
 void plat_publish_status(const char *json) { snprintf(last_status, sizeof(last_status), "%s", json); }
 
 static void net_tick(void)

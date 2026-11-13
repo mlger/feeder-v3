@@ -147,7 +147,7 @@ messages between them changed to carry the weights.
 | --- | --- |
 | Wi-Fi | Scan, pick a network, type the password. The network is remembered. **Use phone** sets it up from a phone instead. |
 | Internet time | Set your UTC offset, then switch on. The clock then follows NTP (`pool.ntp.org`). |
-| Firmware updates | Unlocks uploads on the controller's web page for 10 minutes. |
+| Firmware updates | Shows the address of the controller's upload page. It is always open, with no password. |
 
 Without Wi-Fi the clock comes from the board's RTC: set it once in
 **Settings**. Either way every feeder is kept within 5 s of the controller.
@@ -161,8 +161,8 @@ network moves it to another channel (this takes up to a minute).
 
 Both devices can be updated without a cable once the controller is on Wi-Fi.
 
-1. On the controller open **Network** and switch on **Firmware updates**.
-2. In a browser on the same network open the address shown there.
+1. On the controller open **Network** and note the address under **Firmware updates**.
+2. In a browser on the same network open that address.
 3. **Controller:** upload `hmi/.pio/build/hmi/firmware.bin`. It restarts into
    the new version; if that version fails to start, the next reset returns to
    the previous one.
@@ -175,8 +175,9 @@ ESP-NOW, and serves it the file. The feeder checks the file's MD5 before
 switching, and restarts on its old firmware if anything goes wrong. It is off
 the air for about a minute and skips any feed due in that time.
 
-The web page is plain HTTP on your local network and uploads only work while
-the switch on the controller is on.
+The update page is open: plain HTTP, no password and no switch to turn on.
+Anyone who can reach the controller on your network can replace the firmware
+of the controller or of a feeder, so only use it on a network you trust.
 
 ### Wi-Fi set-up from a phone
 
@@ -225,9 +226,10 @@ Release. Those are the files to upload on the controller's update page.
 
 This is built for a home network, and its protections are physical:
 
-- The controller's web page is plain HTTP with no login. Firmware uploads
-  only work for 10 minutes after someone switches them on at the
-  touchscreen.
+- The controller's web page is plain HTTP with no login, and firmware
+  uploads (controller and feeders) are always open to anyone on the same
+  network. This is deliberate. Keep the controller on a network you trust,
+  and never forward its port to the internet.
 - The two temporary access points (phone set-up, feeder update) use a fresh
   random password each time and exist only while they are needed.
 - ESP-NOW traffic between controller and feeders is not encrypted. A feeder

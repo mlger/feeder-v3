@@ -35,6 +35,7 @@ lv_obj_t *ui_modal;
 static int  rename_node = -1;
 static void (*text_done_cb)(const char *text);
 static uint32_t last_minute;
+static bool pending_home, pending_nodes; /* lists to refresh once no finger is down */
 static bool backlight_on = true;
 
 static dlg_action_t dlg_action;
@@ -148,23 +149,65 @@ static void node_state(int idx, const char **text, const char **color)
     }
 }
 
-static void refresh_home(void)
+/*
+ * The Home and Feeders lists are rebuilt only when the text they show has
+ * changed, and never while a finger is down. Deleting a button between
+ * press and release loses the tap, and every status message from every
+ * feeder used to rebuild both lists.
+ */
+static uint32_t fnv(uint32_t h, const void *data, size_t len)
 {
-    lv_obj_clean(home_list);
+    const uint8_t *p = data;
+    while (len--) {
+        h = (h ^ *p++) * 16777619u;
+    }
+    return h;
+}
+
+static bool pointer_down(void)
+{
+    for (lv_indev_t *i = lv_indev_get_next(NULL); i; i = lv_indev_get_next(i)) {
+        if (lv_indev_get_type(i) == LV_INDEV_TYPE_POINTER && lv_indev_get_state(i) == LV_INDEV_STATE_PRESSED) {
+            return true;
+        }
+    }
+    return false;
+}
+
+typedef struct {
+    int         idx;
+    char        name[FD_NAME_LEN], state[24], last[48], next[48], today[48], food[40];
+    const char *color; /* points at a string constant */
+} home_row_t;
+
+static home_row_t home_rows[APP_MAX_NODES];
+static int        home_count;
+static uint32_t   home_sig;
+static bool       home_built;
+
+static void home_collect(void)
+{
     uint32_t now = plat_local_epoch();
+    memset(home_rows, 0, sizeof(home_rows));
+    home_count = 0;
     for (int i = 0; i < APP_MAX_NODES; i++) {
         const app_node_cfg_t *n = app_node(i);
         if (!n) {
             continue;
         }
+        home_row_t *h = &home_rows[home_count++];
         const app_node_rt_t *r = app_node_rt(i);
         const char *state, *color;
         node_state(i, &state, &color);
+        h->idx = i;
+        h->color = color;
+        snprintf(h->name, sizeof(h->name), "%s", n->name);
+        snprintf(h->state, sizeof(h->state), "%s", state);
 
-        char when[32], last[48], next[48], today[48];
+        char when[32];
         if (r->have_status) {
             ui_fmt_when(when, sizeof(when), r->status.last_feed_epoch, true);
-            snprintf(last, sizeof(last), "Last fed: %s", when);
+            snprintf(h->last, sizeof(h->last), "Last fed: %s", when);
             /* In grams when calibrated; this assumes today's feeds used the
              * calibrated pulse length, hence "about". */
             char amount[24];
@@ -180,75 +223,132 @@ static void refresh_home(void)
                 snprintf(amount, sizeof(amount), "%u.%u s", (unsigned)(r->status.on_ms_today / 1000),
                          (unsigned)(r->status.on_ms_today % 1000 / 100));
             }
-            snprintf(today, sizeof(today), "Today: %u feed%s, %s", r->status.feeds_today,
+            snprintf(h->today, sizeof(h->today), "Today: %u feed%s, %s", r->status.feeds_today,
                      r->status.feeds_today == 1 ? "" : "s", amount);
         } else {
-            snprintf(last, sizeof(last), "Last fed: unknown");
-            snprintf(today, sizeof(today), "Today: unknown");
+            snprintf(h->last, sizeof(h->last), "Last fed: unknown");
+            snprintf(h->today, sizeof(h->today), "Today: unknown");
         }
         uint32_t nx = plat_time_valid() ? app_next_feed(i, now) : 0;
         if (nx) {
             ui_fmt_when(when, sizeof(when), nx, true);
-            snprintf(next, sizeof(next), "Next: %s", when);
+            snprintf(h->next, sizeof(h->next), "Next: %s", when);
         } else {
-            snprintf(next, sizeof(next), n->count ? "Next: nothing scheduled" : "Next: no schedule");
+            snprintf(h->next, sizeof(h->next), n->count ? "Next: nothing scheduled" : "Next: no schedule");
         }
 
         /* Only a feeder with a scale knows how much food is left. */
-        char food[40] = "";
         if (app_has_scale(i)) {
             char g[16];
             int32_t left = app_hopper_mg(i);
             ui_fmt_grams(g, sizeof(g), left > 0 ? (uint32_t)left : 0);
-            snprintf(food, sizeof(food), "Food left: %s", g);
+            snprintf(h->food, sizeof(h->food), "Food left: %s", g);
         }
-        const char *attrs[] = {
-            "name", n->name, "state", state, "state_color", color,
-            "last", last, "next", next, "today", today, "food", food, NULL, NULL,
-        };
-        lv_obj_t *card = lv_xml_create(home_list, "tank_card", attrs);
-        if (!food[0]) {
-            lv_obj_add_flag(lv_obj_find_by_name(card, "food"), LV_OBJ_FLAG_HIDDEN);
-        }
-        ui_row_set_index(card, i);
     }
 }
 
-static void refresh_nodes(void)
+/* Returns true if the list was rebuilt. */
+static bool refresh_home(void)
 {
-    lv_obj_clean(node_list);
+    home_collect();
+    uint32_t sig = 2166136261u;
+    for (int i = 0; i < home_count; i++) {
+        const home_row_t *h = &home_rows[i];
+        sig = fnv(sig, h->name, sizeof(h->name) + sizeof(h->state) + sizeof(h->last) + sizeof(h->next) +
+                                    sizeof(h->today) + sizeof(h->food));
+        sig = fnv(sig, h->color, strlen(h->color));
+        sig = fnv(sig, &h->idx, sizeof(h->idx));
+    }
+    sig = fnv(sig, &home_count, sizeof(home_count));
+    if (home_built && sig == home_sig) {
+        return false;
+    }
+    home_built = true;
+    home_sig = sig;
+
+    lv_obj_clean(home_list);
+    for (int i = 0; i < home_count; i++) {
+        const home_row_t *h = &home_rows[i];
+        const char *attrs[] = {
+            "name", h->name, "state", h->state, "state_color", h->color,
+            "last", h->last, "next", h->next, "today", h->today, "food", h->food, NULL, NULL,
+        };
+        lv_obj_t *card = lv_xml_create(home_list, "tank_card", attrs);
+        if (!h->food[0]) {
+            lv_obj_add_flag(lv_obj_find_by_name(card, "food"), LV_OBJ_FLAG_HIDDEN);
+        }
+        ui_row_set_index(card, h->idx);
+    }
+    return true;
+}
+
+typedef struct {
+    int         idx;
+    char        name[FD_NAME_LEN], detail[96], state[24];
+    const char *color;
+} node_row_t;
+
+static node_row_t node_rows[APP_MAX_NODES];
+static uint32_t   nodes_sig;
+static bool       nodes_built;
+
+static bool refresh_nodes(void)
+{
+    memset(node_rows, 0, sizeof(node_rows));
     int count = 0;
     for (int i = 0; i < APP_MAX_NODES; i++) {
         const app_node_cfg_t *n = app_node(i);
         if (!n) {
             continue;
         }
-        count++;
+        node_row_t *nr = &node_rows[count++];
         const app_node_rt_t *r = app_node_rt(i);
         const char *state, *color;
         node_state(i, &state, &color);
-        char detail[96];
-        int len = snprintf(detail, sizeof(detail), "%02X:%02X:%02X:%02X:%02X:%02X", n->mac[0], n->mac[1],
+        nr->idx = i;
+        nr->color = color;
+        snprintf(nr->name, sizeof(nr->name), "%s", n->name);
+        snprintf(nr->state, sizeof(nr->state), "%s", state);
+        int len = snprintf(nr->detail, sizeof(nr->detail), "%02X:%02X:%02X:%02X:%02X:%02X", n->mac[0], n->mac[1],
                            n->mac[2], n->mac[3], n->mac[4], n->mac[5]);
         if (r->have_status) {
-            len += snprintf(detail + len, sizeof(detail) - (size_t)len, "   firmware %u.%u", r->status.fw_major,
-                            r->status.fw_minor);
+            len += snprintf(nr->detail + len, sizeof(nr->detail) - (size_t)len, "   firmware %u.%u",
+                            r->status.fw_major, r->status.fw_minor);
         }
-        if (app_calibrated(i) && len < (int)sizeof(detail)) {
-            snprintf(detail + len, sizeof(detail) - (size_t)len, "   %u.%02u g per pulse", n->mg_per_pulse / 1000,
-                     n->mg_per_pulse % 1000 / 10);
+        if (app_calibrated(i) && len < (int)sizeof(nr->detail)) {
+            snprintf(nr->detail + len, sizeof(nr->detail) - (size_t)len, "   %u.%02u g per pulse",
+                     n->mg_per_pulse / 1000, n->mg_per_pulse % 1000 / 10);
         }
+    }
+    lv_subject_set_int(&s_node_count, count);
+
+    uint32_t sig = fnv(2166136261u, &count, sizeof(count));
+    for (int i = 0; i < count; i++) {
+        const node_row_t *nr = &node_rows[i];
+        sig = fnv(sig, nr->name, sizeof(nr->name) + sizeof(nr->detail) + sizeof(nr->state));
+        sig = fnv(sig, nr->color, strlen(nr->color));
+        sig = fnv(sig, &nr->idx, sizeof(nr->idx));
+    }
+    if (nodes_built && sig == nodes_sig) {
+        return false;
+    }
+    nodes_built = true;
+    nodes_sig = sig;
+
+    lv_obj_clean(node_list);
+    for (int i = 0; i < count; i++) {
+        const node_row_t *nr = &node_rows[i];
         const char *attrs[] = {
-            "name", n->name, "detail", detail, "state", state, "state_color", color, NULL, NULL,
+            "name", nr->name, "detail", nr->detail, "state", nr->state, "state_color", nr->color, NULL, NULL,
         };
         lv_obj_t *row = lv_xml_create(node_list, "node_row", attrs);
-        ui_row_set_index(row, i);
+        ui_row_set_index(row, nr->idx);
     }
     if (count == 0) {
         lv_obj_t *l = lv_label_create(node_list);
         lv_label_set_text(l, "None yet.");
     }
-    lv_subject_set_int(&s_node_count, count);
+    return true;
 }
 
 static void refresh_found(void)
@@ -345,7 +445,7 @@ static void refresh_clock(bool force)
         lv_subject_copy_string(&s_date, buf);
     }
     refresh_alert();
-    refresh_home(); /* "today", "tomorrow" and the next feed depend on the time */
+    pending_home = true; /* "today", "tomorrow" and the next feed depend on the time */
 }
 
 /* Put the current time (or a sane default) into the Settings steppers. */
@@ -530,6 +630,7 @@ static void on_time_set(lv_event_t *e)
     };
     plat_set_local_epoch(fd_civil_to_epoch(&c));
     refresh_clock(true);
+    refresh_home();
     ui_dialog_open(DLG_NONE, 0, "Clock set", "The feeders pick up the new time within a few seconds.", NULL);
 }
 
@@ -585,8 +686,7 @@ static void ui_tick(lv_timer_t *t)
 
     uint32_t ch = app_take_changes();
     if (ch & APP_CH_NODES) {
-        refresh_nodes();
-        refresh_home();
+        pending_nodes = pending_home = true;
         refresh_alert();
     }
     if (ch & APP_CH_FOUND) {
@@ -594,7 +694,17 @@ static void ui_tick(lv_timer_t *t)
     }
     if (ch & APP_CH_SCHEDULE) {
         ui_schedule_refresh();
-        refresh_home();
+        pending_home = true;
+    }
+    if (!pointer_down()) {
+        if (pending_nodes) {
+            pending_nodes = false;
+            refresh_nodes();
+        }
+        if (pending_home) {
+            pending_home = false;
+            refresh_home();
+        }
     }
     if (ch & APP_CH_LOG) {
         ui_history_refresh();
@@ -726,6 +836,7 @@ void ui_init(void)
     ui_schedule_refresh();
     ui_history_refresh();
     refresh_clock(true);
+    refresh_home();
 
     lv_timer_create(ui_tick, UI_TICK_MS, NULL);
 }

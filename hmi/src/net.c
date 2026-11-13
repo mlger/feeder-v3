@@ -1,10 +1,10 @@
 /*
  * Network side of the HMI: Wi-Fi station, NTP, and firmware updates.
  *
- * Updates are uploaded from a browser on the local network. The page is
- * always readable, but uploads are accepted only while the user has switched
- * "Firmware updates" on at the touchscreen, so changing the firmware needs
- * someone standing at the controller.
+ * Firmware is uploaded from a browser on the local network. The page and the
+ * uploads are open: there is no password and no switch on the touchscreen,
+ * so anyone who can reach the controller on the network can replace its
+ * firmware, or a feeder's. Do not expose it to the internet.
  *
  * Feeders have no network connection of their own. To update one, the HMI
  * opens a short-lived access point with a random password, tells the feeder
@@ -239,7 +239,6 @@ bool plat_ntp_synced(void) { return atomic_load(&ntp_synced); }
 
 /* -------------------------------------------------------------- updates */
 
-static atomic_bool updates_allowed;
 static atomic_int node_ota_request = -1;
 static char status_json[800] = "{}";
 
@@ -247,8 +246,6 @@ static uint8_t *node_fw;       /* PSRAM */
 static uint32_t node_fw_len;
 static char node_fw_md5[33];
 static atomic_bool ota_ap_open, ota_served;
-
-void plat_updates_allow(bool on) { atomic_store(&updates_allowed, on); }
 
 uint32_t plat_node_fw_size(void)
 {
@@ -360,15 +357,6 @@ static esp_err_t reply(httpd_req_t *req, const char *status, const char *text)
     httpd_resp_set_status(req, status);
     httpd_resp_set_type(req, "text/plain");
     return httpd_resp_sendstr(req, text);
-}
-
-static bool uploads_open(httpd_req_t *req)
-{
-    if (atomic_load(&updates_allowed)) {
-        return true;
-    }
-    reply(req, "403 Forbidden", "Uploads are locked. Switch on Firmware updates on the controller.");
-    return false;
 }
 
 /* Receive the request body in pieces. Returns bytes read, or <= 0 on error. */
@@ -558,9 +546,6 @@ static void restart_cb(void *arg)
 
 static esp_err_t h_update_hmi(httpd_req_t *req)
 {
-    if (!uploads_open(req)) {
-        return ESP_OK;
-    }
     const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);
     if (!part || req->content_len == 0 || req->content_len > part->size) {
         return reply(req, "400 Bad Request", "The file is empty or too large for the controller.");
@@ -596,9 +581,6 @@ static esp_err_t h_update_hmi(httpd_req_t *req)
 
 static esp_err_t h_update_node(httpd_req_t *req)
 {
-    if (!uploads_open(req)) {
-        return ESP_OK;
-    }
     if (atomic_load(&ota_ap_open)) {
         return reply(req, "409 Conflict", "A feeder update is running. Try again when it has finished.");
     }
@@ -644,9 +626,6 @@ static esp_err_t h_update_node(httpd_req_t *req)
 
 static esp_err_t h_node_push(httpd_req_t *req)
 {
-    if (!uploads_open(req)) {
-        return ESP_OK;
-    }
     char query[16], val[8];
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
         httpd_query_key_value(query, "i", val, sizeof(val)) != ESP_OK || val[0] < '0' || val[0] > '9') {

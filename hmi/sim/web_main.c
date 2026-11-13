@@ -22,6 +22,15 @@ static uint8_t rgba[W * H * 4];
 static bool dirty;
 static int32_t ptr_x, ptr_y;
 static bool ptr_down;
+static bool release_pending;  /* the button came up before it had been held long enough */
+static double press_frame_ms; /* time of the first frame that showed the current press */
+static double last_frame_ms;
+static bool press_framed;
+
+/* LVGL samples the pointer every 30 ms, so a click must last longer than
+ * that or it is never seen. A real touch panel always does; a mouse click
+ * made by a script, or a very fast one, may not. */
+#define MIN_PRESS_MS 60
 
 static void flush_cb(lv_display_t *d, const lv_area_t *a, uint8_t *px)
 {
@@ -104,8 +113,18 @@ EMSCRIPTEN_KEEPALIVE void web_init(double local_epoch)
 /* `ms`: time since the page loaded. Returns 1 if the pixels changed. */
 EMSCRIPTEN_KEEPALIVE int web_frame(double ms)
 {
+    last_frame_ms = ms;
     sim_world_step((uint32_t)ms + 1000u);
     lv_timer_handler();
+    if (ptr_down && !press_framed) {
+        press_framed = true;
+        press_frame_ms = ms;
+    }
+    if (release_pending && ms - press_frame_ms >= MIN_PRESS_MS) {
+        ptr_down = false;
+        release_pending = false;
+        press_framed = false;
+    }
     if (!dirty) {
         return 0;
     }
@@ -126,7 +145,16 @@ EMSCRIPTEN_KEEPALIVE void web_pointer(int x, int y, int down)
 {
     ptr_x = x;
     ptr_y = y;
-    ptr_down = down != 0;
+    if (down) {
+        ptr_down = true;
+        press_framed = false;
+        release_pending = false;
+    } else if (ptr_down && (!press_framed || last_frame_ms - press_frame_ms < MIN_PRESS_MS)) {
+        release_pending = true; /* too short to be seen: keep it down for a few frames */
+    } else {
+        ptr_down = false;
+        press_framed = false;
+    }
 }
 
 int main(void) { return 0; }
