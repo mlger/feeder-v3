@@ -119,12 +119,25 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+      - name: Fetch the earlier releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir releases
+          for tag in $(gh release list --limit 100 --json tagName --jq '.[].tagName'); do
+            gh release download "$tag" --dir "releases/$tag" || rm -rf "releases/$tag"
+          done
+          ls releases
       - name: Build the site
         run: |
           version="$(cat VERSION)+${GITHUB_SHA::7}"
+          extra=""
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.release }}" = "true" ]; then
+            extra="--release-tag v$(cat VERSION)"
+          fi
           python3 web/build_site.py --out _site --version "$version" \
             --hmi-dir artifacts/hmi-firmware --node-bin artifacts/node-firmware/firmware.bin \
-            --demo-dir artifacts/demo
+            --demo-dir artifacts/demo --releases-dir releases $extra
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
@@ -132,7 +145,8 @@ jobs:
   deploy:
     name: Publish to GitHub Pages
     # Only the default branch is published, and only after the tests pass.
-    if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
+    # A release run also publishes, so the new version appears in the picker.
+    if: (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.release)) && github.ref_name == github.event.repository.default_branch
     needs: [site, test, sim]
     runs-on: ubuntu-latest
     permissions:
@@ -173,6 +187,11 @@ jobs:
           mkdir release
           cp artifacts/hmi-firmware/firmware.bin "release/aio-feeder-controller-${{ steps.tag.outputs.tag }}.bin"
           cp artifacts/node-firmware/firmware.bin "release/aio-feeder-feeder-${{ steps.tag.outputs.tag }}.bin"
+          # One complete controller image (bootloader, partitions, app) for the web flasher.
+          pip install esptool==4.8.1
+          h=artifacts/hmi-firmware
+          python3 -m esptool --chip esp32s3 merge_bin -o "release/aio-feeder-controller-full-${{ steps.tag.outputs.tag }}.bin" \
+            0x0 $h/bootloader.bin 0x8000 $h/partitions.bin 0xf000 $h/ota_data_initial.bin 0x20000 $h/firmware.bin
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}

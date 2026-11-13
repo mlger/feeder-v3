@@ -25,11 +25,16 @@
 
   <h2>Install the firmware</h2>
   <p>Plug the board into this computer with a USB data cable and press its button below. This needs Chrome or Edge on a desktop computer.</p>
+  <p class="version-pick">
+    <label for="version"><strong>Version</strong></label>
+    <select id="version" aria-describedby="vernote"><option value="">Latest build</option></select>
+  </p>
+  <p id="vernote" class="muted" hidden></p>
   <div class="grid">
     <section class="card">
       <h3>Controller</h3>
       <p class="muted">Waveshare ESP32-S3-Touch-LCD-4.3B. Use the USB-C port marked <strong>UART</strong>.</p>
-      <esp-web-install-button manifest="firmware/manifest-hmi.json">
+      <esp-web-install-button id="btn-hmi" manifest="firmware/manifest-hmi.json">
         <button slot="activate">Install controller firmware</button>
         <span slot="unsupported" class="muted">This browser cannot flash boards. Use Chrome or Edge on a desktop computer.</span>
         <span slot="not-allowed" class="muted">Flashing needs a secure (https) page.</span>
@@ -38,7 +43,7 @@
     <section class="card">
       <h3>Feeder</h3>
       <p class="muted">ESP8266 NodeMCU V3 with a DS3231 clock and a relay. One per tank.</p>
-      <esp-web-install-button manifest="firmware/manifest-node.json">
+      <esp-web-install-button id="btn-node" manifest="firmware/manifest-node.json">
         <button slot="activate">Install feeder firmware</button>
         <span slot="unsupported" class="muted">This browser cannot flash boards. Use Chrome or Edge on a desktop computer.</span>
         <span slot="not-allowed" class="muted">Flashing needs a secure (https) page.</span>
@@ -46,7 +51,7 @@
     </section>
   </div>
   <p id="noinstaller" class="note" hidden>The installer could not be loaded, so the buttons above do nothing. Check your internet connection and reload, or flash with PlatformIO as described in the project's README.</p>
-  <p class="muted" style="margin-top:12px">Firmware version <span id="ver">unknown</span>. Choosing "erase device" during install also clears paired feeders, schedules and Wi-Fi settings.</p>
+  <p class="muted" style="margin-top:12px">Firmware version <span id="ver">unknown</span>. Install the controller and the feeders from the same version: from 0.6.0 on they must match. Choosing "erase device" during install also clears paired feeders, schedules and Wi-Fi settings.</p>
 
   <h2>What it does</h2>
   <div class="grid">
@@ -69,9 +74,39 @@ setTimeout(() => {
     document.getElementById("noinstaller").hidden = false;
   }
 }, 6000);
-fetch("firmware/manifest-hmi.json").then(r => r.json()).then(m => {
-  document.getElementById("ver").textContent = m.version;
-}).catch(() => {});
+// Every published version can be installed; the first in the list is the latest.
+const sel = document.getElementById("version");
+const note = document.getElementById("vernote");
+const btnHmi = document.getElementById("btn-hmi");
+const btnNode = document.getElementById("btn-node");
+function show(v) {
+  for (const [btn, m] of [[btnHmi, v.controller], [btnNode, v.feeder]]) {
+    const card = btn.closest(".card");
+    card.style.opacity = m ? "" : "0.5";
+    btn.hidden = !m;
+    if (m) btn.setAttribute("manifest", m);
+  }
+  note.textContent = v.note || "";
+  note.hidden = !v.note;
+  fetch(v.controller || v.feeder).then(r => r.json()).then(m => {
+    document.getElementById("ver").textContent = m.version;
+  }).catch(() => {});
+}
+fetch("firmware/versions.json").then(r => r.json()).then(d => {
+  sel.textContent = "";
+  d.versions.forEach((v, i) => {
+    const o = document.createElement("option");
+    o.value = i;
+    o.textContent = v.label;
+    sel.appendChild(o);
+  });
+  sel.addEventListener("change", () => show(d.versions[sel.value]));
+  show(d.versions[0]);
+}).catch(() => {
+  fetch("firmware/manifest-hmi.json").then(r => r.json()).then(m => {
+    document.getElementById("ver").textContent = m.version;
+  }).catch(() => {});
+});
 </script>
 </body>
 </html>

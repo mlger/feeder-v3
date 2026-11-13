@@ -279,6 +279,15 @@ branch. To switch publishing on, open the repository's **Settings > Pages**
 and set **Source** to **GitHub Actions**. The site then appears at
 `https://mlger.github.io/feeder-v3/`.
 
+The install page has a **Version** picker: the latest build and every GitHub
+release. CI downloads the files of each release when it assembles the site.
+Releases made from 0.9.0 on also carry a complete controller image
+(`aio-feeder-controller-full-v<version>.bin`: bootloader, partition table and
+app). For older releases the site combines their app image with the bootloader
+and partition table of the latest build, which is safe because the partition
+layout has not changed. Install the controller and the feeders from the same
+version.
+
 To build it locally (the demo needs Emscripten; on Ubuntu 24.04
 `sudo apt install emscripten`):
 

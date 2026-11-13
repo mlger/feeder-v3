@@ -50,3 +50,10 @@ footer { color: var(--muted); font-size: 14px; }
 /* Until the installer script has loaded, show only the button. */
 esp-web-install-button:not(:defined) [slot="unsupported"],
 esp-web-install-button:not(:defined) [slot="not-allowed"] { display: none; }
+
+.version-pick { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.version-pick select {
+  font: inherit; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--line, #8886); background: var(--card, transparent); color: inherit;
+  min-height: 44px; max-width: 100%;
+}
