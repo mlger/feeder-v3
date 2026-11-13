@@ -15,6 +15,7 @@
 enum { STEP_SETUP, STEP_WAIT, STEP_WEIGH };
 
 static lv_subject_t s_step, s_on, s_on_txt, s_grams, s_grams_txt, s_title, s_text;
+static lv_subject_t s_rate_on, s_rate_vis;
 static lv_subject_t s_has_scale, s_scale_text, s_scale_reading, s_scale_known, s_scale_known_txt;
 static bool scale_open; /* the open dialog is the scale one */
 static int cal_node = -1;
@@ -42,9 +43,12 @@ static void show_setup(void)
              APP_CAL_PULSES);
     if (app_calibrated(cal_node)) {
         size_t len = strlen(text);
-        snprintf(text + len, sizeof(text) - len, "\nNow: %u.%02u g per pulse.", n->mg_per_pulse / 1000,
-                 n->mg_per_pulse % 1000 / 10);
+        unsigned r = app_rate_mg_per_s(cal_node);
+        snprintf(text + len, sizeof(text) - len, "\nNow: %u.%02u g per pulse, %u.%02u g per second.",
+                 n->mg_per_pulse / 1000, n->mg_per_pulse % 1000 / 10, r / 1000, r % 1000 / 10);
     }
+    lv_subject_set_int(&s_rate_vis, app_calibrated(cal_node) ? 1 : 0);
+    lv_subject_set_int(&s_rate_on, app_plan_by_rate(cal_node) ? 1 : 0);
     lv_subject_copy_string(&s_text, text);
     lv_subject_set_int(&s_step, STEP_SETUP);
 }
@@ -67,6 +71,15 @@ void ui_calibrate_open(int idx)
 
     ui_modal_close();
     ui_modal = cal_modal = lv_xml_create(lv_layer_top(), "cal_dialog", NULL);
+}
+
+/* The plan-by-rate switch takes effect at once. */
+static void on_rate_changed(lv_observer_t *o, lv_subject_t *s)
+{
+    (void)o;
+    if (cal_node >= 0 && app_calibrated(cal_node) && (lv_subject_get_int(s) != 0) != app_plan_by_rate(cal_node)) {
+        app_set_plan_by_rate(cal_node, lv_subject_get_int(s) != 0);
+    }
 }
 
 static void on_cal_cancel(lv_event_t *e)
@@ -224,6 +237,9 @@ static void on_grams_changed(lv_observer_t *o, lv_subject_t *s)
 void ui_calibrate_register(void)
 {
     INT_SUBJECT(s_step, "cal_step", STEP_SETUP);
+    INT_SUBJECT(s_rate_on, "cal_rate", 0);
+    INT_SUBJECT(s_rate_vis, "cal_rate_vis", 0);
+    lv_subject_add_observer(&s_rate_on, on_rate_changed, NULL);
     INT_SUBJECT(s_on, "cal_on", 10);
     STR_SUBJECT(s_on_txt, "cal_on_txt", 16, "");
     INT_SUBJECT(s_grams, "cal_grams", 0);

@@ -50,6 +50,27 @@ void ui_fmt_days(char *buf, size_t n, uint8_t mask)
     }
 }
 
+/* What an amount in grams is run as, and what that really gives, e.g.
+ * "= 4 pulses, gives about 2.4 g" or "= 4.2 s, gives about 2.5 g". */
+void ui_fmt_plan_note(char *buf, size_t n, int idx, uint32_t asked_mg, const char *verb)
+{
+    uint8_t on, p;
+    char g[16];
+    app_plan(idx, asked_mg, &on, &p);
+    ui_fmt_grams(g, sizeof(g), app_mg(idx, on, p));
+    const char *more = asked_mg > app_max_target_mg(idx) ? "More than one feed can give: " : "= ";
+    if (app_plan_by_rate(idx)) {
+        unsigned total = (unsigned)on * p;
+        if (p == 1) {
+            snprintf(buf, n, "%s%u.%u s, %s %s", more, total / 10, total % 10, verb, g);
+        } else {
+            snprintf(buf, n, "%s%u x %u.%u s, %s %s", more, p, on / 10, on % 10, verb, g);
+        }
+    } else {
+        snprintf(buf, n, "%s%u pulse%s, %s %s", more, p, p == 1 ? "" : "s", verb, g);
+    }
+}
+
 void ui_fmt_portion(char *buf, size_t n, uint8_t on_ds, uint8_t pulses)
 {
     if (pulses == 1) {

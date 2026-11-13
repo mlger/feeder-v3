@@ -217,7 +217,9 @@ static void home_collect(void)
                 snprintf(amount, sizeof(amount), "%s weighed", g);
             } else if (app_calibrated(i)) {
                 char g[16];
-                ui_fmt_grams(g, sizeof(g), r->status.on_ms_today / (n->cal_on_ds * 100u) * n->mg_per_pulse);
+                ui_fmt_grams(g, sizeof(g),
+                             app_plan_by_rate(i) ? r->status.on_ms_today * app_rate_mg_per_s(i) / 1000u
+                                                 : r->status.on_ms_today / (n->cal_on_ds * 100u) * n->mg_per_pulse);
                 snprintf(amount, sizeof(amount), "about %s", g);
             } else {
                 snprintf(amount, sizeof(amount), "%u.%u s", (unsigned)(r->status.on_ms_today / 1000),
@@ -316,8 +318,13 @@ static bool refresh_nodes(void)
                             r->status.fw_major, r->status.fw_minor);
         }
         if (app_calibrated(i) && len < (int)sizeof(nr->detail)) {
-            snprintf(nr->detail + len, sizeof(nr->detail) - (size_t)len, "   %u.%02u g per pulse",
-                     n->mg_per_pulse / 1000, n->mg_per_pulse % 1000 / 10);
+            if (app_plan_by_rate(i)) {
+                unsigned r = app_rate_mg_per_s(i);
+                snprintf(nr->detail + len, sizeof(nr->detail) - (size_t)len, "   %u.%02u g/s", r / 1000, r % 1000 / 10);
+            } else {
+                snprintf(nr->detail + len, sizeof(nr->detail) - (size_t)len, "   %u.%02u g per pulse",
+                         n->mg_per_pulse / 1000, n->mg_per_pulse % 1000 / 10);
+            }
         }
     }
     lv_subject_set_int(&s_node_count, count);

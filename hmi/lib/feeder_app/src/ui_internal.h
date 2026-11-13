@@ -97,6 +97,7 @@ void ui_fmt_when(char *buf, size_t n, uint32_t epoch, bool relative);
 void ui_fmt_ds(char *buf, size_t n, int ds);            /* tenths of a second -> "1.5 s" */
 void ui_fmt_days(char *buf, size_t n, uint8_t mask);    /* "Every day", "Weekdays", "Mon Wed" */
 void ui_fmt_portion(char *buf, size_t n, uint8_t on_ds, uint8_t pulses);
+void ui_fmt_plan_note(char *buf, size_t n, int idx, uint32_t asked_mg, const char *verb);
 void ui_fmt_grams(char *buf, size_t n, uint32_t mg);     /* "1.8 g" */
 /* A portion on feeder `idx`: grams if it is calibrated for that pulse
  * length ("1.8 g"), otherwise pulses and seconds. */

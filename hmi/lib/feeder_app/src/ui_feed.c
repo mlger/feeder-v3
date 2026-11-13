@@ -20,14 +20,7 @@ static void show_note(void)
     int idx = feed_node;
     if (app_calibrated(idx)) {
         uint32_t asked = (uint32_t)lv_subject_get_int(&s_tenths) * 100u;
-        uint8_t p = app_pulses_for(idx, asked);
-        char g[16];
-        ui_fmt_grams(g, sizeof(g), app_mg(idx, app_node(idx)->cal_on_ds, p));
-        if (asked > app_max_target_mg(idx)) {
-            snprintf(buf, sizeof(buf), "More than one feed can give: %u pulses, about %s", p, g);
-        } else {
-            snprintf(buf, sizeof(buf), "= %u pulse%s, about %s", p, p == 1 ? "" : "s", g);
-        }
+        ui_fmt_plan_note(buf, sizeof(buf), idx, asked, "about");
     } else {
         uint8_t on = app_settings()->feed_on_ds;
         ui_fmt_portion(buf, sizeof(buf), on, (uint8_t)lv_subject_get_int(&s_pulses));

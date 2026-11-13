@@ -152,6 +152,17 @@ uint8_t app_scale_last_result(void); /* FD_RES_OK, FD_RES_BAD_REQUEST or APP_FEE
 /* Nearest whole number of pulses for `target_mg`, at least 1 and at most the
  * hard limit; 0 if the feeder is not calibrated. Half a pulse rounds up. */
 uint8_t  app_pulses_for(int idx, uint32_t target_mg);
+
+/* ---- planning by flow rate (grams per second) ----
+ * Instead of whole pulses, a calibrated feeder can plan an amount as relay
+ * time: rate x seconds, in 0.1 s steps. The rate is taken from the
+ * calibration (grams per pulse over the pulse length). Longer than the hard
+ * limit for one run is split into equal runs. Per feeder. */
+bool     app_plan_by_rate(int idx);               /* mode on and feeder calibrated */
+void     app_set_plan_by_rate(int idx, bool on);  /* re-plans the stored amounts */
+uint32_t app_rate_mg_per_s(int idx);              /* 0 if not calibrated */
+/* How `target_mg` is run under the feeder's current mode. */
+void     app_plan(int idx, uint32_t target_mg, uint8_t *on_ds, uint8_t *pulses);
 uint32_t app_max_target_mg(int idx);        /* the most one feed can give */
 uint16_t app_entry_target(int idx, int entry); /* grams asked for, 0 = defined in pulses */
 

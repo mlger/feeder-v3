@@ -31,6 +31,9 @@ int ui_sched_node_idx(void)
 static uint32_t daily_s_to_g(int idx, uint32_t seconds)
 {
     const app_node_cfg_t *n = app_node(idx);
+    if (app_plan_by_rate(idx)) {
+        return (seconds * app_rate_mg_per_s(idx) + 500u) / 1000u;
+    }
     uint32_t pulses = (seconds * 10u + n->cal_on_ds / 2u) / n->cal_on_ds;
     return (pulses * n->mg_per_pulse + 500u) / 1000u;
 }
@@ -41,6 +44,11 @@ static uint32_t daily_g_to_s(int idx, uint32_t grams)
         return 0;
     }
     const app_node_cfg_t *n = app_node(idx);
+    if (app_plan_by_rate(idx)) {
+        uint32_t r = app_rate_mg_per_s(idx);
+        uint32_t s = r ? (grams * 1000u + r - 1u) / r : 600u; /* round up */
+        return s > 600u ? 600u : s;
+    }
     uint32_t pulses = (grams * 1000u + n->mg_per_pulse / 2u) / n->mg_per_pulse;
     if (pulses < 1) {
         pulses = 1;
@@ -166,14 +174,7 @@ static void on_ed_tenths_changed(lv_observer_t *o, lv_subject_t *s)
     lv_subject_copy_string(&s_ed_grams_txt, buf);
     int idx = ui_sched_node_idx();
     if (app_calibrated(idx)) {
-        uint8_t p = app_pulses_for(idx, asked);
-        char g[16];
-        ui_fmt_grams(g, sizeof(g), app_mg(idx, app_node(idx)->cal_on_ds, p));
-        if (asked > app_max_target_mg(idx)) {
-            snprintf(note, sizeof(note), "More than one feed can give: %u pulses, about %s", p, g);
-        } else {
-            snprintf(note, sizeof(note), "= %u pulse%s, gives about %s", p, p == 1 ? "" : "s", g);
-        }
+        ui_fmt_plan_note(note, sizeof(note), idx, asked, "gives about");
     }
     lv_subject_copy_string(&s_ed_note, note);
 }
@@ -198,8 +199,8 @@ static void editor_open(int entry)
     if (entry >= 0 && entry < n->count) {
         e = n->entries[entry];
     }
-    /* A calibrated feeder is set in grams, which only holds for its
-     * calibrated pulse length, so the editor fixes the length to that. */
+    /* A calibrated feeder is set in grams; the model works out the pulses or
+     * the relay time from it. */
     lv_subject_set_int(&s_ed_cal, app_calibrated(idx) ? 1 : 0);
     if (app_calibrated(idx)) {
         e.on_ds = n->cal_on_ds;
@@ -213,7 +214,8 @@ static void editor_open(int entry)
     if (app_calibrated(idx)) {
         /* What was asked for, or what the pulses give if it was set in pulses. */
         uint32_t mg = entry >= 0 && app_entry_target(idx, entry) ? app_entry_target(idx, entry)
-                                                                   : (uint32_t)n->mg_per_pulse * e.pulses;
+                                                                   : app_mg(idx, e.on_ds, e.pulses) ? app_mg(idx, e.on_ds, e.pulses)
+                                                                                        : (uint32_t)n->mg_per_pulse * e.pulses;
         int tenths = (int)((mg + 50u) / 100u);
         lv_subject_set_int(&s_ed_tenths, tenths < 1 ? 1 : tenths > 600 ? 600 : tenths);
     }

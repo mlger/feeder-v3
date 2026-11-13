@@ -81,6 +81,15 @@ typedef struct {
 } store_targets_t;
 static store_targets_t targets;
 
+/* Per feeder: plan amounts by flow rate (g/s) instead of whole pulses. Its own
+ * blob, so the stored feeders and targets survive this being added. */
+typedef struct {
+    uint32_t magic;
+    uint8_t  by_rate[APP_MAX_NODES];
+} store_modes_t;
+static store_modes_t modes;
+static void save_modes(void) { plat_save("modes", &modes, sizeof(modes)); }
+
 static void save_targets(void) { plat_save("targets", &targets, sizeof(targets)); }
 static void save_nodes(void)
 {
@@ -105,6 +114,10 @@ void app_init(void)
     if (!plat_load("targets", &targets, sizeof(targets)) || targets.magic != STORE_MAGIC) {
         memset(&targets, 0, sizeof(targets));
         targets.magic = STORE_MAGIC;
+    }
+    if (!plat_load("modes", &modes, sizeof(modes)) || modes.magic != STORE_MAGIC) {
+        memset(&modes, 0, sizeof(modes));
+        modes.magic = STORE_MAGIC;
     }
     if (!plat_load("log", &logbuf, sizeof(logbuf)) || logbuf.magic != STORE_MAGIC ||
         logbuf.head >= APP_LOG_SIZE || logbuf.count > APP_LOG_SIZE) {
@@ -299,8 +312,13 @@ static void learn_from_weighing(int idx, const fd_msg_feed_event_t *ev)
     if (!app_calibrated(idx)) {
         n->mg_per_pulse = (uint16_t)per; /* the scale calibrates the feeder by itself */
         n->cal_on_ds = on_ds;
-    } else if (on_ds == n->cal_on_ds) {
-        n->mg_per_pulse = (uint16_t)((3u * n->mg_per_pulse + per + 2u) / 4u); /* move a quarter of the way */
+    } else if (on_ds == n->cal_on_ds || (app_plan_by_rate(idx) && on_ds > 0)) {
+        /* by rate, a run of any length says what a calibrated-length pulse drops */
+        uint32_t at_cal = on_ds == n->cal_on_ds ? per : per * n->cal_on_ds / on_ds;
+        if (at_cal == 0 || at_cal > 0xFFFFu) {
+            return;
+        }
+        n->mg_per_pulse = (uint16_t)((3u * n->mg_per_pulse + at_cal + 2u) / 4u); /* move a quarter of the way */
     } else {
         return;
     }
@@ -677,6 +695,8 @@ int app_adopt(const uint8_t mac[6])
         n->limits.daily_max_on_s = 30;
         memset(&rt[idx], 0, sizeof(rt[idx]));
         memset(targets.t[idx], 0, sizeof(targets.t[idx]));
+        modes.by_rate[idx] = 0;
+        save_modes();
         save_nodes();
     }
     for (int i = 0; i < APP_MAX_FOUND; i++) {
@@ -702,6 +722,8 @@ void app_remove_node(int idx)
     memset(n, 0, sizeof(*n));
     memset(&rt[idx], 0, sizeof(rt[idx]));
     memset(targets.t[idx], 0, sizeof(targets.t[idx]));
+    modes.by_rate[idx] = 0;
+    save_modes();
     if (feed.active && feed.node == idx) {
         feed.active = false;
     }
@@ -771,25 +793,77 @@ uint32_t app_next_feed(int idx, uint32_t now_epoch)
 
 /* ---- exact grams ---- */
 
+bool app_plan_by_rate(int idx)
+{
+    return idx >= 0 && idx < APP_MAX_NODES && modes.by_rate[idx] && app_calibrated(idx);
+}
+
+void app_set_plan_by_rate(int idx, bool on)
+{
+    if (!app_node(idx)) {
+        return;
+    }
+    modes.by_rate[idx] = on ? 1 : 0;
+    save_modes();
+    resync_targets(idx);
+    changes |= APP_CH_NODES | APP_CH_SCHEDULE;
+}
+
+uint32_t app_rate_mg_per_s(int idx)
+{
+    const app_node_cfg_t *n = app_node(idx);
+    return app_calibrated(idx) ? (uint32_t)n->mg_per_pulse * 10u / n->cal_on_ds : 0;
+}
+
+/* By pulses: the calibrated length, the nearest whole number of pulses.
+ * By rate: the relay time that drops the amount (0.1 s steps), split into
+ * equal runs of at most the hard limit when it is longer than that. */
+void app_plan(int idx, uint32_t target_mg, uint8_t *on_ds, uint8_t *pulses)
+{
+    const app_node_cfg_t *n = app_node(idx);
+    *on_ds = app_feed_on_ds(idx);
+    *pulses = 1;
+    if (!app_calibrated(idx)) {
+        return;
+    }
+    uint32_t mg = n->mg_per_pulse;
+    if (!app_plan_by_rate(idx)) {
+        uint32_t p = (target_mg + mg / 2u) / mg;
+        *on_ds = n->cal_on_ds;
+        *pulses = (uint8_t)(p < 1 ? 1 : p > FD_HARD_MAX_PULSES ? FD_HARD_MAX_PULSES : p);
+        return;
+    }
+    /* mg per 0.1 s = mg_per_pulse / cal_on_ds */
+    uint32_t total = (target_mg * n->cal_on_ds + mg / 2u) / mg;
+    if (total < 1) {
+        total = 1;
+    }
+    if (total > (uint32_t)FD_HARD_MAX_ON_DS * FD_HARD_MAX_PULSES) {
+        total = (uint32_t)FD_HARD_MAX_ON_DS * FD_HARD_MAX_PULSES;
+    }
+    uint32_t p = (total + FD_HARD_MAX_ON_DS - 1u) / FD_HARD_MAX_ON_DS;
+    *pulses = (uint8_t)p;
+    *on_ds = (uint8_t)((total + p / 2u) / p);
+}
+
 uint8_t app_pulses_for(int idx, uint32_t target_mg)
 {
+    uint8_t on, p;
     if (!app_calibrated(idx)) {
         return 0;
     }
-    uint32_t mg = app_node(idx)->mg_per_pulse;
-    uint32_t p = (target_mg + mg / 2u) / mg;
-    if (p < 1) {
-        p = 1;
-    }
-    if (p > FD_HARD_MAX_PULSES) {
-        p = FD_HARD_MAX_PULSES;
-    }
-    return (uint8_t)p;
+    app_plan(idx, target_mg, &on, &p);
+    return p;
 }
 
 uint32_t app_max_target_mg(int idx)
 {
-    return app_calibrated(idx) ? (uint32_t)app_node(idx)->mg_per_pulse * FD_HARD_MAX_PULSES : 0;
+    const app_node_cfg_t *n = app_node(idx);
+    if (!app_calibrated(idx)) {
+        return 0;
+    }
+    return app_plan_by_rate(idx) ? (uint32_t)n->mg_per_pulse * FD_HARD_MAX_ON_DS * FD_HARD_MAX_PULSES / n->cal_on_ds
+                                 : (uint32_t)n->mg_per_pulse * FD_HARD_MAX_PULSES;
 }
 
 uint16_t app_entry_target(int idx, int entry)
@@ -811,10 +885,11 @@ static void resync_targets(int idx)
         if (targets.t[idx][i] == 0) {
             continue;
         }
-        uint8_t p = app_pulses_for(idx, targets.t[idx][i]);
-        if (n->entries[i].pulses != p || n->entries[i].on_ds != n->cal_on_ds) {
+        uint8_t on, p;
+        app_plan(idx, targets.t[idx][i], &on, &p);
+        if (n->entries[i].pulses != p || n->entries[i].on_ds != on) {
             n->entries[i].pulses = p;
-            n->entries[i].on_ds = n->cal_on_ds;
+            n->entries[i].on_ds = on;
             moved = true;
         }
     }
@@ -842,8 +917,7 @@ bool app_entry_save(int idx, int entry, const fd_sched_entry_t *e, uint16_t targ
     targets.t[idx][at] = 0;
     if (target_mg && app_calibrated(idx)) {
         targets.t[idx][at] = target_mg;
-        n->entries[at].pulses = app_pulses_for(idx, target_mg);
-        n->entries[at].on_ds = n->cal_on_ds;
+        app_plan(idx, target_mg, &n->entries[at].on_ds, &n->entries[at].pulses);
     }
     /* Keep the list in time order (stable insertion sort), targets moving along. */
     for (int i = 1; i < n->count; i++) {
@@ -880,8 +954,12 @@ void app_entry_delete(int idx, int entry)
 
 bool app_feed_grams(int idx, uint32_t target_mg)
 {
-    uint8_t pulses = app_pulses_for(idx, target_mg);
-    if (pulses == 0 || !app_feed_custom(idx, app_node(idx)->cal_on_ds, pulses)) {
+    uint8_t on_ds, pulses;
+    if (!app_calibrated(idx)) {
+        return false;
+    }
+    app_plan(idx, target_mg, &on_ds, &pulses);
+    if (!app_feed_custom(idx, on_ds, pulses)) {
         return false;
     }
     rt[idx].manual_asked_mg = target_mg > 0xFFFFu ? 0xFFFFu : (uint16_t)target_mg;
@@ -970,13 +1048,21 @@ uint8_t app_feed_on_ds(int idx)
     return app_calibrated(idx) ? app_node(idx)->cal_on_ds : settings.s.feed_on_ds;
 }
 
-/* The weight is only known for pulses of the calibrated length. */
+/* By pulses the weight is only known for the calibrated length; by rate it is
+ * known for any length (flow rate times relay time). */
 uint32_t app_mg(int idx, uint8_t on_ds, uint32_t pulses)
 {
-    if (!app_calibrated(idx) || on_ds != app_node(idx)->cal_on_ds) {
+    if (!app_calibrated(idx)) {
         return 0;
     }
-    return (uint32_t)app_node(idx)->mg_per_pulse * pulses;
+    const app_node_cfg_t *n = app_node(idx);
+    if (app_plan_by_rate(idx)) {
+        return ((uint32_t)n->mg_per_pulse * on_ds * pulses + n->cal_on_ds / 2u) / n->cal_on_ds;
+    }
+    if (on_ds != n->cal_on_ds) {
+        return 0;
+    }
+    return (uint32_t)n->mg_per_pulse * pulses;
 }
 
 bool app_feed_busy(void) { return feed.active; }

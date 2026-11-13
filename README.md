@@ -127,6 +127,29 @@ Home, History, the daily limit and the SD-card log).
 - The conversion lives on the controller only. Feeders still receive pulses,
   so their hard limits work exactly as before.
 
+### Planning by flow rate (grams per second)
+
+By default an amount is run as whole pulses. Under **Feeders > Calibrate**
+a calibrated feeder has a switch, *Plan amounts by flow rate (g/s)*. With it
+on, the controller works out the flow rate from the calibration (grams per
+pulse over the pulse length, e.g. 0.6 g in 1.0 s is 0.6 g/s) and plans every
+amount as relay time, in steps of 0.1 s: 2.5 g becomes one run of 4.2 s,
+which gives about 2.5 g.
+
+- Anything longer than the hard limit for one run (5.0 s) is split into equal
+  runs: 7 g is 3 runs of 3.9 s. One feed can give up to 20 runs of 5.0 s.
+- The schedule editor, Feed now, the daily limit, Home, History and the SD
+  log all work in grams as before; the editor and Feed now say what they will
+  run, e.g. "= 4.2 s, gives about 2.5 g".
+- It is per feeder. Switching re-plans the feeding times that were set in
+  grams and sends them to the feeder; ones set in pulses are left alone.
+- It assumes the food flow is proportional to relay time. A very short run
+  may drop less than the rate suggests because the valve needs a moment to
+  open, so calibrate with a pulse length close to the ones you use. Weighed
+  feeds, if you have a scale, keep the rate honest.
+- The feeders need no update for this: they still receive an on-time and a
+  number of runs.
+
 ### Optional scale under the hopper
 
 A feeder can carry a load cell (HX711 on D6/D7) under its food hopper. It is

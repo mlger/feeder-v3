@@ -662,6 +662,108 @@ int main(int argc, char **argv)
               app_entry_target(0, 1) == 2500,
           "adding an entry puts it in time order, grams staying with their entry");
 
+    printf("Planning by flow rate (grams per second)\n");
+    {
+        uint8_t on, pl;
+        CHECK(!app_plan_by_rate(0) && app_rate_mg_per_s(0) == 600, "pulses are the default; 0.6 g in 1 s is 0.6 g/s");
+        CHECK(!app_plan_by_rate(1), "an uncalibrated feeder cannot plan by rate");
+        app_set_plan_by_rate(1, true);
+        CHECK(!app_plan_by_rate(1), "...even if asked");
+        app_set_plan_by_rate(1, false);
+
+        /* The switch in the Calibrate dialog works at once. */
+        ui_show_page(2);
+        run(500);
+        click("Calibrate", 0);
+        CHECK(lv_subject_get_int(lv_xml_get_subject(NULL, "cal_rate_vis")) == 1, "the switch is offered to a calibrated feeder");
+        lv_subject_set_int(lv_xml_get_subject(NULL, "cal_rate"), 1);
+        CHECK(app_plan_by_rate(0), "turning the switch on plans by rate");
+        shot("19n_calibrate_rate");
+        click("Cancel", 0);
+
+        app_plan(0, 2500, &on, &pl);
+        CHECK(on == 42 && pl == 1, "2.5 g at 0.6 g/s is one run of 4.2 s");
+        CHECK(app_mg(0, 42, 1) == 2520, "...which gives 2.52 g");
+        app_plan(0, 6000, &on, &pl);
+        CHECK(on == 50 && pl == 2, "6 g is longer than one run may be: two runs of 5.0 s");
+        app_plan(0, 7000, &on, &pl);
+        CHECK(pl == 3 && on == 39, "7 g (11.7 s) is split in three equal runs of 3.9 s, each within the 5.0 s limit");
+        app_plan(0, 1000000, &on, &pl);
+        CHECK(on == 50 && pl == FD_HARD_MAX_PULSES && app_max_target_mg(0) == 60000, "the most one feed can give is 20 runs of 5.0 s");
+        CHECK(app_mg(0, 7, 3) == 1260, "any run length has a known weight (2.1 s x 0.6 g/s)");
+
+        /* The stored feeding time keeps 2.5 g and is re-planned when the mode changes. */
+        int k = -1;
+        for (int i = 0; i < app_node(0)->count; i++) {
+            if (app_entry_target(0, i) == 2500) {
+                k = i;
+            }
+        }
+        CHECK(k >= 0 && app_node(0)->entries[k].on_ds == 42 && app_node(0)->entries[k].pulses == 1,
+              "turning rate planning on re-planned the 2.5 g feeding time as 4.2 s");
+        run(12000);
+        CHECK(fnodes[0].n.cfg.entries[k].on_ds == 42 && fnodes[0].n.cfg.entries[k].pulses == 1, "...and sent it to the feeder");
+        CHECK(app_node(0)->entries[0].pulses == 1 && app_node(0)->entries[0].on_ds == 10 && app_entry_target(0, 0) == 0,
+              "feeding times set in pulses are left alone");
+
+        /* The editor says it in seconds. */
+        ui_show_page(1);
+        run(500);
+        click(LV_SYMBOL_PLUS "  Add feeding time", 0);
+        lv_subject_set_int(lv_xml_get_subject(NULL, "ed_tenths"), 25);
+        {
+            const char *note = lv_subject_get_string(lv_xml_get_subject(NULL, "ed_note"));
+            CHECK(strstr(note, "4.2 s") && strstr(note, "2.5 g"), "the editor says 2.5 g is 4.2 s, about 2.5 g");
+        }
+        lv_subject_set_int(lv_xml_get_subject(NULL, "ed_tenths"), 60);
+        {
+            const char *note = lv_subject_get_string(lv_xml_get_subject(NULL, "ed_note"));
+            CHECK(strstr(note, "2 x 5.0 s") != NULL, "6 g is shown as 2 x 5.0 s");
+        }
+        shot("19o_editor_rate");
+        click("Cancel", 0);
+
+        /* Recalibrating moves the rate and the planned time. */
+        app_set_calibration(0, 10, 5000);
+        run(12000);
+        CHECK(app_rate_mg_per_s(0) == 500 && app_node(0)->entries[k].on_ds == 50 && app_node(0)->entries[k].pulses == 1,
+              "at 0.5 g/s the 2.5 g feeding time becomes 5.0 s");
+        app_set_calibration(0, 10, 6000);
+        run(12000);
+
+        /* The daily limit is grams over the rate. */
+        CHECK(lv_subject_get_int(lv_xml_get_subject(NULL, "lim_daily_g")) == 18, "30 s at 0.6 g/s is 18 g");
+        lv_subject_set_int(lv_xml_get_subject(NULL, "lim_daily_g"), 9);
+        run(14000);
+        CHECK(fnodes[0].n.cfg.limits.daily_max_on_s == 15, "9 g is 15 s of relay time");
+        lv_subject_set_int(lv_xml_get_subject(NULL, "lim_daily_g"), 18);
+        run(14000);
+
+        /* Feed now in grams: one run of 5.0 s for 3.0 g. */
+        run(11 * 60000);
+        lv_display_trigger_activity(NULL);
+        ui_show_page(0);
+        run(500);
+        click("Feed now", 0);
+        lv_subject_set_int(lv_xml_get_subject(NULL, "fd_tenths"), 30);
+        CHECK(strstr(lv_subject_get_string(lv_xml_get_subject(NULL, "fd_note")), "5.0 s") != NULL,
+              "the Feed now dialog says 3.0 g is 5.0 s");
+        int before_rate = fnodes[0].relay_pulses;
+        click("Feed", 0);
+        run(9000);
+        click("OK", 0);
+        run(4000);
+        CHECK(fnodes[0].relay_pulses - before_rate == 1, "Feed now with 3.0 g ran one 5.0 s run");
+        CHECK(strstr(sd_last_line, ",manual,fed,5.0,1,3.0,estimated,3.0") != NULL, "the SD log has 5.0 s, 3.0 g given and asked");
+        printf("    last line: %s\n", sd_last_line);
+
+        /* Back to pulses: the feeding time returns to 4 pulses of 1.0 s. */
+        app_set_plan_by_rate(0, false);
+        run(12000);
+        CHECK(!app_plan_by_rate(0) && app_node(0)->entries[k].on_ds == 10 && app_node(0)->entries[k].pulses == 4,
+              "switching back plans 2.5 g as 4 pulses again");
+    }
+
     printf("A scale is fitted under the first feeder's hopper\n");
     lv_subject_t *alert = lv_xml_get_subject(NULL, "alert");
     lv_subject_t *scale_text = lv_xml_get_subject(NULL, "scale_text");
