@@ -524,21 +524,7 @@ static void on_set_date_changed(lv_observer_t *o, lv_subject_t *s)
 
 /* -------------------------------------------------------- event callbacks */
 
-static void on_feed_click(lv_event_t *e)
-{
-    int idx = ui_row_index_of(e);
-    const app_node_cfg_t *n = app_node(idx);
-    if (!n) {
-        return;
-    }
-    char title[40], text[96], portion[32];
-    uint8_t pulses = app_settings()->feed_pulses;
-    ui_fmt_amount(portion, sizeof(portion), idx, app_feed_on_ds(idx), pulses);
-    snprintf(title, sizeof(title), "Feed %s now?", n->name);
-    snprintf(text, sizeof(text), app_calibrated(idx) ? "The feeder will give about %s." : "The feeder will run %s.",
-             portion);
-    ui_dialog_open(DLG_FEED, idx, title, text, "Feed");
-}
+static void on_feed_click(lv_event_t *e) { ui_feed_open(ui_row_index_of(e)); }
 
 static void on_node_calibrate(lv_event_t *e) { ui_calibrate_open(ui_row_index_of(e)); }
 
@@ -647,26 +633,12 @@ static void on_dialog_ok(lv_event_t *e)
     int arg = dlg_arg;
     ui_modal_close();
     switch (action) {
-    case DLG_FEED:
-        if (!app_feed_now(arg)) {
-            ui_dialog_open(DLG_NONE, 0, "Busy", "Another feed request is still in progress.", NULL);
-        }
-        break;
     case DLG_REMOVE:
         app_remove_node(arg);
         break;
-    case DLG_DELETE_ENTRY: {
-        int idx = ui_sched_node_idx();
-        app_node_cfg_t *n = app_node(idx);
-        if (n && arg >= 0 && arg < n->count) {
-            for (int i = arg; i + 1 < n->count; i++) {
-                n->entries[i] = n->entries[i + 1];
-            }
-            n->count--;
-            app_schedule_changed(idx);
-        }
+    case DLG_DELETE_ENTRY:
+        app_entry_delete(ui_sched_node_idx(), arg);
         break;
-    }
     case DLG_CLEAR_LOG:
         app_log_clear();
         break;
@@ -751,7 +723,7 @@ static void register_xml(void)
         "globals", "row", "col", "nav_button", "stepper", "tank_card", "sched_row", "node_row",
         "found_row", "hist_row", "page_home", "page_schedule", "page_nodes", "page_history",
         "page_settings", "wifi_row", "page_network", "sched_editor", "dialog", "text_dialog", "cal_dialog",
-        "scale_dialog",
+        "scale_dialog", "feed_dialog",
         "setup_dialog", "main",
     };
     for (size_t i = 0; i < sizeof(order) / sizeof(order[0]); i++) {
@@ -805,6 +777,7 @@ void ui_init(void)
 
     ui_schedule_register();
     ui_calibrate_register();
+    ui_feed_register();
     ui_network_register();
 
     apply_theme();

@@ -7,6 +7,7 @@
  *   ui_schedule.c  the Schedule page and the feeding-time editor
  *   ui_network.c   the Network page: Wi-Fi, internet time, updates
  *   ui_calibrate.c the grams calibration dialog
+ *   ui_feed.c      the Feed now dialog
  *   ui_format.c    text formatting
  */
 #ifndef FEEDER_UI_INTERNAL_H
@@ -39,7 +40,7 @@
 extern bool ui_loading;     /* true while code (not the user) sets subjects */
 extern lv_obj_t *ui_modal;  /* the one open dialog or editor, or NULL */
 
-typedef enum { DLG_NONE, DLG_FEED, DLG_REMOVE, DLG_DELETE_ENTRY, DLG_CLEAR_LOG } dlg_action_t;
+typedef enum { DLG_NONE, DLG_REMOVE, DLG_DELETE_ENTRY, DLG_CLEAR_LOG } dlg_action_t;
 
 void ui_modal_close(void);
 /* Message box. With DLG_NONE it only has an OK button; otherwise OK runs
@@ -63,6 +64,11 @@ void ui_schedule_attach(lv_obj_t *root);  /* after the screen exists */
 void ui_schedule_refresh(void);
 void ui_schedule_tick(void);
 int  ui_sched_node_idx(void);             /* feeder slot chosen on the Schedule page */
+
+/* ---- ui_feed.c ---- */
+
+void ui_feed_register(void);
+void ui_feed_open(int idx); /* the Feed now dialog for one feeder */
 
 /* ---- ui_calibrate.c ---- */
 

@@ -73,10 +73,24 @@ static struct {
     char               text[64];
 } ota = { .node = -1 };
 
-static void save_nodes(void) { plat_save("nodes", &nodes, sizeof(nodes)); }
+/* Grams asked for per feeding time. Kept apart from `nodes` so that the stored
+ * feeders, schedules and history survive this being added. */
+typedef struct {
+    uint32_t magic;
+    uint16_t t[APP_MAX_NODES][FD_MAX_ENTRIES];
+} store_targets_t;
+static store_targets_t targets;
+
+static void save_targets(void) { plat_save("targets", &targets, sizeof(targets)); }
+static void save_nodes(void)
+{
+    plat_save("nodes", &nodes, sizeof(nodes));
+    save_targets();
+}
 static void save_log(void) { plat_save("log", &logbuf, sizeof(logbuf)); }
 
 static void ota_finish(app_ota_state_t state, const char *text);
+static void resync_targets(int idx);
 static void learn_from_weighing(int idx, const fd_msg_feed_event_t *ev);
 static void ota_on_status(int idx, const fd_msg_status_t *st);
 
@@ -87,6 +101,10 @@ void app_init(void)
     if (!plat_load("nodes", &nodes, sizeof(nodes)) || nodes.magic != STORE_MAGIC) {
         memset(&nodes, 0, sizeof(nodes));
         nodes.magic = STORE_MAGIC;
+    }
+    if (!plat_load("targets", &targets, sizeof(targets)) || targets.magic != STORE_MAGIC) {
+        memset(&targets, 0, sizeof(targets));
+        targets.magic = STORE_MAGIC;
     }
     if (!plat_load("log", &logbuf, sizeof(logbuf)) || logbuf.magic != STORE_MAGIC ||
         logbuf.head >= APP_LOG_SIZE || logbuf.count > APP_LOG_SIZE) {
@@ -287,13 +305,14 @@ static void learn_from_weighing(int idx, const fd_msg_feed_event_t *ev)
         return;
     }
     save_nodes();
+    resync_targets(idx);
     changes |= APP_CH_NODES | APP_CH_SCHEDULE;
 }
 
 /* One CSV line per event on the SD card, which keeps the full history. */
 static void sd_log(const app_log_entry_t *e)
 {
-    char name[2 * FD_NAME_LEN + 3], line[160];
+    char name[2 * FD_NAME_LEN + 3], line[176];
     const app_node_cfg_t *n = app_node(e->node);
     /* CSV quoting: wrap in quotes and double any quote inside. */
     size_t k = 0;
@@ -331,9 +350,21 @@ static void sd_log(const app_log_entry_t *e)
         uint32_t tenths = (mg + 50u) / 100u; /* rounded, as on the screen */
         snprintf(grams, sizeof(grams), "%u.%u", (unsigned)(tenths / 10u), (unsigned)(tenths % 10u));
     }
-    snprintf(line, sizeof(line), "%04u-%02u-%02u %02u:%02u:%02u,%s,%s,%s,%u.%u,%u,%s,%s", c.year, c.month, c.day,
+    /* What was asked for, if the request was in grams. */
+    uint32_t asked = 0;
+    if (e->source == FD_SOURCE_MANUAL) {
+        asked = rt[e->node].manual_asked_mg;
+    } else if (n && e->source < n->count) {
+        asked = targets.t[e->node][e->source];
+    }
+    char asked_txt[12] = "";
+    if (asked) {
+        uint32_t tenths = (asked + 50u) / 100u;
+        snprintf(asked_txt, sizeof(asked_txt), "%u.%u", (unsigned)(tenths / 10u), (unsigned)(tenths % 10u));
+    }
+    snprintf(line, sizeof(line), "%04u-%02u-%02u %02u:%02u:%02u,%s,%s,%s,%u.%u,%u,%s,%s,%s", c.year, c.month, c.day,
              c.hour, c.minute, c.second, name, source, e->result == FD_RES_OK ? "fed" : app_result_text(e->result),
-             e->on_ms / 1000, e->on_ms % 1000 / 100, e->pulses, grams, kind);
+             e->on_ms / 1000, e->on_ms % 1000 / 100, e->pulses, grams, kind, asked_txt);
     plat_sd_append(APP_SD_LOG_FILE, APP_SD_LOG_HEADER, line);
 }
 
@@ -645,6 +676,7 @@ int app_adopt(const uint8_t mac[6])
         n->limits.cooldown_s = 600;
         n->limits.daily_max_on_s = 30;
         memset(&rt[idx], 0, sizeof(rt[idx]));
+        memset(targets.t[idx], 0, sizeof(targets.t[idx]));
         save_nodes();
     }
     for (int i = 0; i < APP_MAX_FOUND; i++) {
@@ -669,6 +701,7 @@ void app_remove_node(int idx)
     plat_send(n->mac, &m, sizeof(m));
     memset(n, 0, sizeof(*n));
     memset(&rt[idx], 0, sizeof(rt[idx]));
+    memset(targets.t[idx], 0, sizeof(targets.t[idx]));
     if (feed.active && feed.node == idx) {
         feed.active = false;
     }
@@ -736,6 +769,125 @@ uint32_t app_next_feed(int idx, uint32_t now_epoch)
 
 /* ---- manual feed ---- */
 
+/* ---- exact grams ---- */
+
+uint8_t app_pulses_for(int idx, uint32_t target_mg)
+{
+    if (!app_calibrated(idx)) {
+        return 0;
+    }
+    uint32_t mg = app_node(idx)->mg_per_pulse;
+    uint32_t p = (target_mg + mg / 2u) / mg;
+    if (p < 1) {
+        p = 1;
+    }
+    if (p > FD_HARD_MAX_PULSES) {
+        p = FD_HARD_MAX_PULSES;
+    }
+    return (uint8_t)p;
+}
+
+uint32_t app_max_target_mg(int idx)
+{
+    return app_calibrated(idx) ? (uint32_t)app_node(idx)->mg_per_pulse * FD_HARD_MAX_PULSES : 0;
+}
+
+uint16_t app_entry_target(int idx, int entry)
+{
+    const app_node_cfg_t *n = app_node(idx);
+    return n && entry >= 0 && entry < n->count ? targets.t[idx][entry] : 0;
+}
+
+/* After the grams-per-pulse changed, re-plan every feeding time that was
+ * set in grams, and send the schedule if any pulse count moved. */
+static void resync_targets(int idx)
+{
+    app_node_cfg_t *n = app_node(idx);
+    if (!n || !app_calibrated(idx)) {
+        return;
+    }
+    bool moved = false;
+    for (uint8_t i = 0; i < n->count; i++) {
+        if (targets.t[idx][i] == 0) {
+            continue;
+        }
+        uint8_t p = app_pulses_for(idx, targets.t[idx][i]);
+        if (n->entries[i].pulses != p || n->entries[i].on_ds != n->cal_on_ds) {
+            n->entries[i].pulses = p;
+            n->entries[i].on_ds = n->cal_on_ds;
+            moved = true;
+        }
+    }
+    if (moved) {
+        app_schedule_changed(idx);
+    }
+}
+
+static int entry_minutes(const fd_sched_entry_t *e) { return e->hour * 60 + e->minute; }
+
+bool app_entry_save(int idx, int entry, const fd_sched_entry_t *e, uint16_t target_mg)
+{
+    app_node_cfg_t *n = app_node(idx);
+    if (!n) {
+        return false;
+    }
+    int at = entry;
+    if (entry < 0 || entry >= n->count) {
+        if (n->count >= FD_MAX_ENTRIES) {
+            return false;
+        }
+        at = n->count++;
+    }
+    n->entries[at] = *e;
+    targets.t[idx][at] = 0;
+    if (target_mg && app_calibrated(idx)) {
+        targets.t[idx][at] = target_mg;
+        n->entries[at].pulses = app_pulses_for(idx, target_mg);
+        n->entries[at].on_ds = n->cal_on_ds;
+    }
+    /* Keep the list in time order (stable insertion sort), targets moving along. */
+    for (int i = 1; i < n->count; i++) {
+        fd_sched_entry_t key = n->entries[i];
+        uint16_t key_t = targets.t[idx][i];
+        int j = i - 1;
+        while (j >= 0 && entry_minutes(&n->entries[j]) > entry_minutes(&key)) {
+            n->entries[j + 1] = n->entries[j];
+            targets.t[idx][j + 1] = targets.t[idx][j];
+            j--;
+        }
+        n->entries[j + 1] = key;
+        targets.t[idx][j + 1] = key_t;
+    }
+    app_schedule_changed(idx);
+    return true;
+}
+
+void app_entry_delete(int idx, int entry)
+{
+    app_node_cfg_t *n = app_node(idx);
+    if (!n || entry < 0 || entry >= n->count) {
+        return;
+    }
+    for (int i = entry; i + 1 < n->count; i++) {
+        n->entries[i] = n->entries[i + 1];
+        targets.t[idx][i] = targets.t[idx][i + 1];
+    }
+    n->count--;
+    targets.t[idx][n->count] = 0;
+    memset(&n->entries[n->count], 0, sizeof(n->entries[0]));
+    app_schedule_changed(idx);
+}
+
+bool app_feed_grams(int idx, uint32_t target_mg)
+{
+    uint8_t pulses = app_pulses_for(idx, target_mg);
+    if (pulses == 0 || !app_feed_custom(idx, app_node(idx)->cal_on_ds, pulses)) {
+        return false;
+    }
+    rt[idx].manual_asked_mg = target_mg > 0xFFFFu ? 0xFFFFu : (uint16_t)target_mg;
+    return true;
+}
+
 bool app_feed_custom(int idx, uint8_t on_ds, uint8_t pulses)
 {
     if (feed.active || !app_node(idx)) {
@@ -748,6 +900,7 @@ bool app_feed_custom(int idx, uint8_t on_ds, uint8_t pulses)
     feed.tries = 0;
     feed.on_ds = on_ds;
     feed.pulses = pulses;
+    rt[idx].manual_asked_mg = 0;
     send_feed();
     return true;
 }
@@ -802,6 +955,7 @@ void app_set_calibration(int idx, uint8_t on_ds, uint32_t total_mg)
     n->mg_per_pulse = per > 0xFFFFu ? 0xFFFFu : (uint16_t)per;
     n->cal_on_ds = n->mg_per_pulse ? on_ds : 0;
     save_nodes();
+    resync_targets(idx);
     changes |= APP_CH_NODES | APP_CH_SCHEDULE | APP_CH_LOG;
 }
 

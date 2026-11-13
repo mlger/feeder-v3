@@ -84,6 +84,10 @@ static void demo_setup(void)
     fnodes[0].scale_fitted = fnodes[0].scale_zeroed = fnodes[0].scale_ready = true;
     fnodes[0].hopper_mg = 180000;
     fnodes[0].true_mg_per_pulse = 580;
+    {   /* A midday feeding asked for in grams: 1.3 g is 2 pulses, about 1.2 g. */
+        fd_sched_entry_t noon = { 12, 0, FD_ENTRY_ENABLED | FD_DOW_ALL, 10, 2 };
+        app_entry_save(a, -1, &noon, 1300);
+    }
 
     n = app_node(b);
     memcpy(n->entries, tank2, sizeof(tank2));

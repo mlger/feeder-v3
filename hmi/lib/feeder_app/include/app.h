@@ -53,6 +53,7 @@ typedef struct {
     uint32_t        last_event_epoch;
     uint32_t        last_push_ms; /* rate limit for SCHED_SET / TIME_SYNC */
     bool            low_output;   /* the last weighed feed gave far less than expected */
+    uint16_t        manual_asked_mg; /* grams asked for by the last Feed now, 0 = none */
 } app_node_rt_t;
 
 typedef struct {
@@ -142,8 +143,27 @@ bool    app_scale_set(int idx, uint8_t op, uint32_t known_mg);
 int     app_scale_last_node(void);
 uint8_t app_scale_last_result(void); /* FD_RES_OK, FD_RES_BAD_REQUEST or APP_FEED_NO_REPLY */
 
+/* ---- exact grams (calibrated feeders) ----
+ * A feeder only does whole pulses, so an exact amount is turned into the
+ * nearest number of pulses. The amount asked for is kept next to the
+ * pulses, so a later recalibration re-plans the pulses and the feeding
+ * still gives about what was asked. */
+
+/* Nearest whole number of pulses for `target_mg`, at least 1 and at most the
+ * hard limit; 0 if the feeder is not calibrated. Half a pulse rounds up. */
+uint8_t  app_pulses_for(int idx, uint32_t target_mg);
+uint32_t app_max_target_mg(int idx);        /* the most one feed can give */
+uint16_t app_entry_target(int idx, int entry); /* grams asked for, 0 = defined in pulses */
+
+/* Add (entry < 0) or replace a feeding time and send the schedule. With a
+ * target_mg on a calibrated feeder the pulses are worked out from it. The
+ * list is kept in time order. False if the list is full. */
+bool app_entry_save(int idx, int entry, const fd_sched_entry_t *e, uint16_t target_mg);
+void app_entry_delete(int idx, int entry);
+
 /* ---- manual feed ---- */
 bool    app_feed_now(int idx); /* false if another request is in flight */
+bool    app_feed_grams(int idx, uint32_t target_mg); /* calibrated feeders only */
 bool    app_feed_custom(int idx, uint8_t on_ds, uint8_t pulses);
 bool    app_feed_busy(void);
 int     app_feed_last_node(void);
@@ -175,7 +195,7 @@ void            app_settings_save(void);
 
 /* Every feed event is also appended to this file on the SD card. */
 #define APP_SD_LOG_FILE   "feedlog.csv"
-#define APP_SD_LOG_HEADER "time,feeder,source,result,seconds,pulses,grams,grams_are"
+#define APP_SD_LOG_HEADER "time,feeder,source,result,seconds,pulses,grams,grams_are,grams_asked"
 
 /* Text for a feed result code. */
 const char *app_result_text(uint8_t result);

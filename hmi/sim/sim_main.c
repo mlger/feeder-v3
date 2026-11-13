@@ -374,9 +374,9 @@ int main(int argc, char **argv)
 
     printf("SD card log\n");
     CHECK(sd_lines == app_log_count(), "every history event was written to the SD card");
-    CHECK(strcmp(sd_last_header, "time,feeder,source,result,seconds,pulses,grams,grams_are") == 0, "CSV header is right");
+    CHECK(strcmp(sd_last_header, "time,feeder,source,result,seconds,pulses,grams,grams_are,grams_asked") == 0, "CSV header is right");
     CHECK(strncmp(sd_last_line, "2026-11-09 08:00:", 17) == 0 &&
-          strcmp(sd_last_line + 19, ",\"Tank 2\",manual,fed,1.0,1,,") == 0, "CSV line is as expected (no grams yet)");
+          strcmp(sd_last_line + 19, ",\"Tank 2\",manual,fed,1.0,1,,,") == 0, "CSV line is as expected (no grams yet)");
     printf("    last line: %s\n", sd_last_line);
     CHECK(strstr(lv_subject_get_string(lv_xml_get_subject(NULL, "log_summary")), "SD card: logging") != NULL,
           "History shows that the SD card is logging");
@@ -559,6 +559,109 @@ int main(int argc, char **argv)
     CHECK(!app_calibrated(0) && app_feed_on_ds(0) == app_settings()->feed_on_ds, "entering 0 g removes the calibration");
     app_set_calibration(0, 10, 6000);
 
+    printf("Exact grams\n");
+    /* Rounding to the nearest whole pulse (0.6 g each), half a pulse rounds up. */
+    CHECK(app_pulses_for(0, 300) == 1 && app_pulses_for(0, 840) == 1 && app_pulses_for(0, 900) == 2 &&
+              app_pulses_for(0, 1000) == 2 && app_pulses_for(0, 60000) == FD_HARD_MAX_PULSES,
+          "grams are rounded to the nearest pulse, at least 1 and at most the hard limit");
+    CHECK(app_pulses_for(1, 1000) == 0, "an uncalibrated feeder has no grams");
+    CHECK(app_max_target_mg(0) == 600u * FD_HARD_MAX_PULSES, "the most one feed can give is the hard limit of pulses");
+
+    ui_show_page(1);
+    run(500);
+    click(LV_SYMBOL_PLUS "  Add feeding time", 0);
+    lv_subject_set_int(lv_xml_get_subject(NULL, "ed_hour"), 9);
+    lv_subject_set_int(lv_xml_get_subject(NULL, "ed_min"), 15);
+    lv_subject_set_int(lv_xml_get_subject(NULL, "ed_tenths"), 25); /* 2.5 g */
+    {
+        const char *note = lv_subject_get_string(lv_xml_get_subject(NULL, "ed_note"));
+        CHECK(strstr(note, "4 pulses") && strstr(note, "2.4 g"), "the editor says 2.5 g is 4 pulses, about 2.4 g");
+    }
+    shot("19k_editor_exact_grams");
+    click("Save", 0);
+    run(12000);
+    int at = -1;
+    for (int i = 0; i < app_node(0)->count; i++) {
+        if (app_node(0)->entries[i].hour == 9 && app_node(0)->entries[i].minute == 15) {
+            at = i;
+        }
+    }
+    CHECK(at >= 0 && app_node(0)->entries[at].pulses == 4 && app_entry_target(0, at) == 2500 &&
+              app_node(0)->entries[at].on_ds == 10,
+          "the entry keeps 2.5 g asked and 4 pulses");
+    CHECK(at == 1 && fnodes[0].n.cfg.entries[1].hour == 9 && fnodes[0].n.cfg.entries[1].pulses == 4,
+          "the list stays in time order and the feeder got the pulses");
+    CHECK(app_entry_target(0, 0) == 0 && app_entry_target(0, 2) == 0, "other entries stay defined in pulses");
+    shot("19l_schedule_exact_grams");
+
+    /* A recalibration re-plans the feeding times that were set in grams. */
+    uint16_t rev = app_node(0)->rev;
+    app_set_calibration(0, 10, 5000); /* now 0.5 g per pulse */
+    run(12000);
+    CHECK(app_node(0)->entries[at].pulses == 5 && app_node(0)->rev != rev && fnodes[0].n.cfg.entries[at].pulses == 5,
+          "after recalibrating to 0.5 g per pulse 2.5 g becomes 5 pulses, and is sent to the feeder");
+    CHECK(app_node(0)->entries[0].pulses == 1 && app_node(0)->entries[2].pulses == 3,
+          "entries set in pulses are left alone");
+    app_set_calibration(0, 10, 6000);
+    run(12000);
+    CHECK(app_node(0)->entries[at].pulses == 4, "and back to 4 pulses at 0.6 g per pulse");
+
+    /* Editing a feeding time starts from what was asked for, not from the rounded pulses. */
+    click(LV_SYMBOL_EDIT, at);
+    CHECK(lv_subject_get_int(lv_xml_get_subject(NULL, "ed_tenths")) == 25, "editing it shows 2.5 g again");
+    click("Cancel", 0);
+
+    /* Feed now in grams. */
+    run(11 * 60000);
+    lv_display_trigger_activity(NULL);
+    ui_show_page(0);
+    run(500);
+    click("Feed now", 0);
+    shot("19m_feed_now_dialog");
+    check_steppers("feed dialog", 1);
+    lv_subject_set_int(lv_xml_get_subject(NULL, "fd_tenths"), 30); /* 3.0 g */
+    CHECK(strstr(lv_subject_get_string(lv_xml_get_subject(NULL, "fd_note")), "5 pulses") != NULL,
+          "the Feed now dialog says 3.0 g is 5 pulses");
+    int before_exact = fnodes[0].relay_pulses;
+    click("Feed", 0);
+    run(8000);
+    click("OK", 0);
+    run(4000);
+    CHECK(fnodes[0].relay_pulses - before_exact == 5, "Feed now with 3.0 g ran 5 pulses");
+    CHECK(strstr(sd_last_line, ",manual,fed,5.0,5,3.0,estimated,3.0") != NULL, "the SD log has the grams given and asked");
+    printf("    last line: %s\n", sd_last_line);
+    click("Feed now", 0);
+    CHECK(lv_subject_get_int(lv_xml_get_subject(NULL, "fd_tenths")) == 30, "the dialog opens at the amount last used");
+    click("Cancel", 0);
+
+    /* Daily limit in grams. */
+    ui_show_page(1);
+    run(500);
+    CHECK(lv_subject_get_int(lv_xml_get_subject(NULL, "lim_cal")) == 1 &&
+              lv_subject_get_int(lv_xml_get_subject(NULL, "lim_daily_g")) == 18,
+          "the daily limit of 30 s is shown as 18 g");
+    lv_subject_set_int(lv_xml_get_subject(NULL, "lim_daily_g"), 12);
+    run(14000);
+    CHECK(fnodes[0].n.cfg.limits.daily_max_on_s == 20, "12 g is sent to the feeder as 20 s of relay time");
+    lv_subject_set_int(lv_xml_get_subject(NULL, "lim_daily_g"), 18);
+    run(14000);
+    CHECK(fnodes[0].n.cfg.limits.daily_max_on_s == 30, "and 18 g as 30 s");
+
+    /* Deleting keeps the grams of the entries after it. */
+    click(LV_SYMBOL_TRASH, 0);
+    click("Delete", 0);
+    run(3000);
+    CHECK(app_node(0)->count == 2 && app_entry_target(0, 0) == 2500 && app_node(0)->entries[0].hour == 9,
+          "deleting the first entry moves the others, and their grams, up");
+    {
+        fd_sched_entry_t back = { 8, 0, FD_ENTRY_ENABLED | FD_DOW_ALL, 10, 1 };
+        app_entry_save(0, -1, &back, 0);
+        run(12000);
+    }
+    CHECK(app_node(0)->count == 3 && app_node(0)->entries[0].hour == 8 && app_entry_target(0, 0) == 0 &&
+              app_entry_target(0, 1) == 2500,
+          "adding an entry puts it in time order, grams staying with their entry");
+
     printf("A scale is fitted under the first feeder's hopper\n");
     lv_subject_t *alert = lv_xml_get_subject(NULL, "alert");
     lv_subject_t *scale_text = lv_xml_get_subject(NULL, "scale_text");
@@ -593,6 +696,7 @@ int main(int argc, char **argv)
     ui_show_page(0);
     run(500);
     click("Feed now", 0);
+    lv_subject_set_int(lv_xml_get_subject(NULL, "fd_tenths"), 6); /* 0.6 g = one pulse */
     click("Feed", 0);
     run(6000);
     click("OK", 0);

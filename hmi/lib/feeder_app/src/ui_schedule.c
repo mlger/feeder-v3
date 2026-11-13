@@ -7,10 +7,10 @@
 #define LIMITS_SETTLE_MS 1200
 
 static lv_subject_t s_sched_node;
-static lv_subject_t s_lim_cool, s_lim_daily, s_lim_gap;
-static lv_subject_t s_lim_cool_txt, s_lim_daily_txt, s_lim_gap_txt;
+static lv_subject_t s_lim_cool, s_lim_daily, s_lim_gap, s_lim_daily_g, s_lim_cal;
+static lv_subject_t s_lim_cool_txt, s_lim_daily_txt, s_lim_gap_txt, s_lim_daily_g_txt;
 static lv_subject_t s_ed_hour, s_ed_min, s_ed_on, s_ed_pulses, s_ed_on_txt, s_ed_title;
-static lv_subject_t s_ed_cal, s_ed_grams_txt; /* editor in grams mode, and the amount shown */
+static lv_subject_t s_ed_cal, s_ed_grams_txt, s_ed_tenths, s_ed_note; /* editor in grams mode: amount in tenths of a gram */
 static lv_subject_t s_ed_day[7];
 
 static lv_obj_t *sched_list, *sched_dd;
@@ -26,6 +26,29 @@ int ui_sched_node_idx(void)
     return pos >= 0 && pos < dd_count ? dd_map[pos] : -1;
 }
 
+/* The daily limit is counted by the feeder in relay-on seconds. On a
+ * calibrated feeder it is entered in grams and converted both ways. */
+static uint32_t daily_s_to_g(int idx, uint32_t seconds)
+{
+    const app_node_cfg_t *n = app_node(idx);
+    uint32_t pulses = (seconds * 10u + n->cal_on_ds / 2u) / n->cal_on_ds;
+    return (pulses * n->mg_per_pulse + 500u) / 1000u;
+}
+
+static uint32_t daily_g_to_s(int idx, uint32_t grams)
+{
+    if (grams == 0) {
+        return 0;
+    }
+    const app_node_cfg_t *n = app_node(idx);
+    uint32_t pulses = (grams * 1000u + n->mg_per_pulse / 2u) / n->mg_per_pulse;
+    if (pulses < 1) {
+        pulses = 1;
+    }
+    uint32_t s = (pulses * n->cal_on_ds + 9u) / 10u; /* round up: never block the last pulse */
+    return s > 600u ? 600u : s;
+}
+
 static void limits_to_text(void)
 {
     char buf[40];
@@ -33,17 +56,11 @@ static void limits_to_text(void)
     snprintf(buf, sizeof(buf), v ? "%d min" : "Off", v);
     lv_subject_copy_string(&s_lim_cool_txt, buf);
     v = lv_subject_get_int(&s_lim_daily);
-    /* The feeder counts relay-on seconds; show what that is in food. */
-    int idx = ui_sched_node_idx();
-    if (v && app_calibrated(idx)) {
-        char g[16];
-        const app_node_cfg_t *n = app_node(idx);
-        ui_fmt_grams(g, sizeof(g), (uint32_t)v * 10u / n->cal_on_ds * n->mg_per_pulse);
-        snprintf(buf, sizeof(buf), "%d s = %s", v, g);
-    } else {
-        snprintf(buf, sizeof(buf), v ? "%d s" : "Off", v);
-    }
+    snprintf(buf, sizeof(buf), v ? "%d s" : "Off", v);
     lv_subject_copy_string(&s_lim_daily_txt, buf);
+    v = lv_subject_get_int(&s_lim_daily_g);
+    snprintf(buf, sizeof(buf), v ? "%d g" : "Off", v);
+    lv_subject_copy_string(&s_lim_daily_g_txt, buf);
     ui_fmt_ds(buf, sizeof(buf), lv_subject_get_int(&s_lim_gap));
     lv_subject_copy_string(&s_lim_gap_txt, buf);
 }
@@ -80,10 +97,20 @@ void ui_schedule_refresh(void)
     if (n) {
         for (uint8_t i = 0; i < n->count; i++) {
             const fd_sched_entry_t *e = &n->entries[i];
-            char time[8], days[40], portion[32];
+            char time[8], days[40], portion[48];
             snprintf(time, sizeof(time), "%02d:%02d", e->hour, e->minute);
             ui_fmt_days(days, sizeof(days), e->dow_mask);
             ui_fmt_amount(portion, sizeof(portion), idx, e->on_ds, e->pulses);
+            uint16_t asked = app_entry_target(idx, i);
+            if (asked && app_mg(idx, e->on_ds, e->pulses)) {
+                /* Asked in grams: say what the whole pulses really give. */
+                char want[16], give[16];
+                ui_fmt_grams(want, sizeof(want), asked);
+                ui_fmt_grams(give, sizeof(give), app_mg(idx, e->on_ds, e->pulses));
+                if (strcmp(want, give) != 0) {
+                    snprintf(portion, sizeof(portion), "%s asked, about %s", want, give);
+                }
+            }
             const char *attrs[] = {
                 "time", time, "days", days, "portion", portion,
                 "enabled", (e->dow_mask & FD_ENTRY_ENABLED) ? "true" : "false", NULL, NULL,
@@ -98,9 +125,11 @@ void ui_schedule_refresh(void)
         if (limits_dirty_ms == 0) {
             lv_subject_set_int(&s_lim_cool, n->limits.cooldown_s / 60);
             lv_subject_set_int(&s_lim_daily, n->limits.daily_max_on_s);
+            lv_subject_set_int(&s_lim_daily_g, app_calibrated(idx) ? (int)daily_s_to_g(idx, n->limits.daily_max_on_s) : 0);
             lv_subject_set_int(&s_lim_gap, n->limits.gap_ds);
         }
     }
+    lv_subject_set_int(&s_lim_cal, app_calibrated(idx) ? 1 : 0);
     limits_to_text();
     ui_loading = false;
 }
@@ -127,16 +156,26 @@ static void on_limit_changed(lv_observer_t *o, lv_subject_t *s)
     limits_dirty_ms = plat_millis() ? plat_millis() : 1;
 }
 
-/* The grams the chosen number of pulses comes to. */
-static void on_ed_pulses_changed(lv_observer_t *o, lv_subject_t *s)
+/* Grams chosen in the editor: show it, and the whole pulses it comes to. */
+static void on_ed_tenths_changed(lv_observer_t *o, lv_subject_t *s)
 {
     (void)o;
-    char buf[16] = "";
+    char buf[16], note[80] = "";
+    uint32_t asked = (uint32_t)lv_subject_get_int(s) * 100u;
+    ui_fmt_grams(buf, sizeof(buf), asked);
+    lv_subject_copy_string(&s_ed_grams_txt, buf);
     int idx = ui_sched_node_idx();
     if (app_calibrated(idx)) {
-        ui_fmt_grams(buf, sizeof(buf), (uint32_t)app_node(idx)->mg_per_pulse * (uint32_t)lv_subject_get_int(s));
+        uint8_t p = app_pulses_for(idx, asked);
+        char g[16];
+        ui_fmt_grams(g, sizeof(g), app_mg(idx, app_node(idx)->cal_on_ds, p));
+        if (asked > app_max_target_mg(idx)) {
+            snprintf(note, sizeof(note), "More than one feed can give: %u pulses, about %s", p, g);
+        } else {
+            snprintf(note, sizeof(note), "= %u pulse%s, gives about %s", p, p == 1 ? "" : "s", g);
+        }
     }
-    lv_subject_copy_string(&s_ed_grams_txt, buf);
+    lv_subject_copy_string(&s_ed_note, note);
 }
 
 static void on_ed_on_changed(lv_observer_t *o, lv_subject_t *s)
@@ -171,7 +210,14 @@ static void editor_open(int entry)
     lv_subject_set_int(&s_ed_min, e.minute);
     lv_subject_set_int(&s_ed_on, e.on_ds);
     lv_subject_set_int(&s_ed_pulses, e.pulses);
-    lv_subject_notify(&s_ed_pulses); /* refresh the grams even if the count is unchanged */
+    if (app_calibrated(idx)) {
+        /* What was asked for, or what the pulses give if it was set in pulses. */
+        uint32_t mg = entry >= 0 && app_entry_target(idx, entry) ? app_entry_target(idx, entry)
+                                                                   : (uint32_t)n->mg_per_pulse * e.pulses;
+        int tenths = (int)((mg + 50u) / 100u);
+        lv_subject_set_int(&s_ed_tenths, tenths < 1 ? 1 : tenths > 600 ? 600 : tenths);
+    }
+    lv_subject_notify(&s_ed_tenths); /* refresh the amount and the note even if unchanged */
     for (int d = 0; d < 7; d++) {
         lv_subject_set_int(&s_ed_day[d], (e.dow_mask >> d) & 1);
     }
@@ -272,25 +318,12 @@ static void on_ed_save(lv_event_t *e)
             ne.dow_mask |= (uint8_t)(1u << d);
         }
     }
-    if (ed_entry >= 0 && ed_entry < n->count) {
-        ne.dow_mask |= n->entries[ed_entry].dow_mask & FD_ENTRY_ENABLED;
-        n->entries[ed_entry] = ne;
-    } else if (n->count < FD_MAX_ENTRIES) {
-        ne.dow_mask |= FD_ENTRY_ENABLED;
-        n->entries[n->count++] = ne;
-    }
-    /* Keep the list in time order. */
-    for (int i = 1; i < n->count; i++) {
-        fd_sched_entry_t key = n->entries[i];
-        int j = i - 1;
-        while (j >= 0 && (n->entries[j].hour * 60 + n->entries[j].minute) > (key.hour * 60 + key.minute)) {
-            n->entries[j + 1] = n->entries[j];
-            j--;
-        }
-        n->entries[j + 1] = key;
-    }
+    bool existing = ed_entry >= 0 && ed_entry < n->count;
+    ne.dow_mask |= existing ? (uint8_t)(n->entries[ed_entry].dow_mask & FD_ENTRY_ENABLED) : (uint8_t)FD_ENTRY_ENABLED;
+    /* On a calibrated feeder the amount is in grams; the model turns it into pulses. */
+    uint16_t target = app_calibrated(idx) ? (uint16_t)((uint32_t)lv_subject_get_int(&s_ed_tenths) * 100u) : 0;
     ui_modal_close();
-    app_schedule_changed(idx);
+    app_entry_save(idx, existing ? ed_entry : -1, &ne, target);
 }
 
 /* Push edited limits once the user has stopped tapping. */
@@ -301,7 +334,9 @@ void ui_schedule_tick(void)
         limits_dirty_ms = 0;
         if (n) {
             n->limits.cooldown_s = (uint16_t)(lv_subject_get_int(&s_lim_cool) * 60);
-            n->limits.daily_max_on_s = (uint16_t)lv_subject_get_int(&s_lim_daily);
+            n->limits.daily_max_on_s = app_calibrated(limits_dirty_node)
+                                           ? (uint16_t)daily_g_to_s(limits_dirty_node, (uint32_t)lv_subject_get_int(&s_lim_daily_g))
+                                           : (uint16_t)lv_subject_get_int(&s_lim_daily);
             n->limits.gap_ds = (uint8_t)lv_subject_get_int(&s_lim_gap);
             app_schedule_changed(limits_dirty_node);
         }
@@ -313,6 +348,9 @@ void ui_schedule_register(void)
     INT_SUBJECT(s_sched_node, "sched_node", 0);
     INT_SUBJECT(s_lim_cool, "lim_cool", 10);
     INT_SUBJECT(s_lim_daily, "lim_daily", 30);
+    INT_SUBJECT(s_lim_daily_g, "lim_daily_g", 0);
+    INT_SUBJECT(s_lim_cal, "lim_cal", 0);
+    STR_SUBJECT(s_lim_daily_g_txt, "lim_daily_g_txt", 16, "");
     INT_SUBJECT(s_lim_gap, "lim_gap", 5);
     STR_SUBJECT(s_lim_cool_txt, "lim_cool_txt", 16, "");
     STR_SUBJECT(s_lim_daily_txt, "lim_daily_txt", 16, "");
@@ -322,6 +360,8 @@ void ui_schedule_register(void)
     INT_SUBJECT(s_ed_min, "ed_min", 0);
     INT_SUBJECT(s_ed_on, "ed_on", 10);
     INT_SUBJECT(s_ed_pulses, "ed_pulses", 1);
+    INT_SUBJECT(s_ed_tenths, "ed_tenths", 10);
+    STR_SUBJECT(s_ed_note, "ed_note", 80, "");
     STR_SUBJECT(s_ed_on_txt, "ed_on_txt", 16, "");
     STR_SUBJECT(s_ed_title, "ed_title", 24, "");
     INT_SUBJECT(s_ed_cal, "ed_cal", 0);
@@ -347,7 +387,8 @@ void ui_schedule_attach(lv_obj_t *root)
     lv_subject_add_observer(&s_sched_node, on_sched_node_changed, NULL);
     lv_subject_add_observer(&s_lim_cool, on_limit_changed, NULL);
     lv_subject_add_observer(&s_lim_daily, on_limit_changed, NULL);
+    lv_subject_add_observer(&s_lim_daily_g, on_limit_changed, NULL);
     lv_subject_add_observer(&s_lim_gap, on_limit_changed, NULL);
     lv_subject_add_observer(&s_ed_on, on_ed_on_changed, NULL);
-    lv_subject_add_observer(&s_ed_pulses, on_ed_pulses_changed, NULL);
+    lv_subject_add_observer(&s_ed_tenths, on_ed_tenths_changed, NULL);
 }

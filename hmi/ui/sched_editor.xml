@@ -20,10 +20,14 @@
         <stepper title="Pulses" subject="ed_pulses" display="ed_pulses" min="1" max="20">
           <bind_flag_if_eq subject="ed_cal" flag="hidden" ref_value="1"/>
         </stepper>
-        <stepper title="Portion" w="160" subject="ed_pulses" display="ed_grams_txt" fmt="%s" min="1" max="20">
+        <stepper title="Portion" w="160" subject="ed_tenths" display="ed_grams_txt" fmt="%s" min="1" max="600">
           <bind_flag_if_eq subject="ed_cal" flag="hidden" ref_value="0"/>
         </stepper>
       </row>
+      <lv_label bind_text="ed_note" width="100%" long_mode="wrap" style_text_align="right">
+        <style name="muted"/>
+        <bind_flag_if_eq subject="ed_cal" flag="hidden" ref_value="0"/>
+      </lv_label>
       <row style_flex_main_place="space_between">
         <lv_button width="74" height="46" checkable="true" bind_checked="ed_d0"><style name="day"/><style name="day_on" selector="checked"/><lv_label text="Sun" align="center"/></lv_button>
         <lv_button width="74" height="46" checkable="true" bind_checked="ed_d1"><style name="day"/><style name="day_on" selector="checked"/><lv_label text="Mon" align="center"/></lv_button>

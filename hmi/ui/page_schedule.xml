@@ -26,8 +26,15 @@
         <lv_label text="Safety limits" flex_grow="1"/>
         <stepper title="Cooldown" w="144" subject="lim_cool" display="lim_cool_txt" fmt="%s"
                  step="5" neg_step="-5" min="0" max="240"/>
-        <stepper title="Daily limit" w="190" subject="lim_daily" display="lim_daily_txt" fmt="%s"
-                 step="5" neg_step="-5" min="0" max="600"/>
+        <!-- Seconds of relay time, or grams once the feeder is calibrated. -->
+        <stepper title="Daily limit" w="144" subject="lim_daily" display="lim_daily_txt" fmt="%s"
+                 step="5" neg_step="-5" min="0" max="600">
+          <bind_flag_if_eq subject="lim_cal" flag="hidden" ref_value="1"/>
+        </stepper>
+        <stepper title="Daily limit" w="144" subject="lim_daily_g" display="lim_daily_g_txt" fmt="%s"
+                 min="0" max="600">
+          <bind_flag_if_eq subject="lim_cal" flag="hidden" ref_value="0"/>
+        </stepper>
         <stepper title="Pulse gap" w="144" subject="lim_gap" display="lim_gap_txt" fmt="%s"
                  step="1" min="2" max="50"/>
       </lv_obj>

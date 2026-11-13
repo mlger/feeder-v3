@@ -110,7 +110,14 @@ enter the weight. The controller stores grams-per-pulse for that feeder and
 from then on shows and takes portions in grams (schedule editor, Feed now,
 Home, History, the daily limit and the SD-card log).
 
-- Portions move in steps of one pulse.
+- Portions move in steps of one pulse. You can type any amount in tenths of
+  a gram: the controller uses the nearest whole number of pulses (half a
+  pulse rounds up) and says so, e.g. "asked 2.5 g, gives about 2.4 g".
+- The grams you asked for are remembered with each feeding time. If you
+  re-calibrate, those feeding times are re-planned and sent to the feeder
+  again. Feeding times set in pulses are left alone.
+- Feed now opens a dialog with the amount in grams; it starts at the amount
+  you used last. The daily limit is also set in grams.
 - Grams are only claimed for feeds that use the calibrated pulse length;
   the schedule editor fixes the pulse length for a calibrated feeder.
 - The run is a normal manual feed: the cooldown and daily limit apply, and
@@ -194,9 +201,9 @@ With a FAT-formatted card in the controller's slot, every feed and every
 refused feed is appended to `feedlog.csv`:
 
 ```
-time,feeder,source,result,seconds,pulses,grams,grams_are
-2026-11-09 08:00:00,"Goldfish",schedule 1,fed,1.0,1,0.6,weighed
-2026-11-09 08:01:12,"Tetras",manual,Skipped: cooldown,0.0,0,,
+time,feeder,source,result,seconds,pulses,grams,grams_are,grams_asked
+2026-11-09 08:00:00,"Goldfish",schedule 1,fed,1.0,1,0.6,weighed,0.6
+2026-11-09 08:01:12,"Tetras",manual,Skipped: cooldown,0.0,0,,,
 ```
 
 The History page shows whether a card is in use, and the update web page has
