@@ -1079,6 +1079,7 @@ const char *app_result_text(uint8_t result)
     case FD_RES_BAD_REQUEST:  return "Rejected";
     case FD_RES_ABORTED:      return "Aborted by failsafe";
     case FD_RES_TIME_INVALID: return "Skipped: clock not set";
+    case FD_RES_STORAGE:      return "Not fed: feeder storage error";
     case APP_FEED_NO_REPLY:   return "No reply from feeder";
     default:                  return "Unknown";
     }

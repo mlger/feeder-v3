@@ -46,7 +46,8 @@ typedef enum {
     FD_RES_BUSY         = 3, /* a feed is already running */
     FD_RES_BAD_REQUEST  = 4, /* malformed message or zero-length feed */
     FD_RES_ABORTED      = 5, /* failsafe cut the relay */
-    FD_RES_TIME_INVALID = 6  /* clock not set; scheduled feed not run */
+    FD_RES_TIME_INVALID = 6, /* clock not set; scheduled feed not run */
+    FD_RES_STORAGE      = 7  /* the feed could not be recorded to flash, so it was not run */
 } fd_result_t;
 
 /* STATUS flags */

@@ -243,8 +243,12 @@ static fd_result_t try_feed(fd_node_t *n, uint32_t now_ms, uint32_t now_epoch, u
 
     /* Record the feed before energising the relay. If power fails mid-feed
      * the node must not repeat it on the next boot. */
+    fd_guard_t before = n->st.guard;
     fd_guard_commit(&n->st.guard, now_epoch, (uint32_t)on_ds * 100u * pulses);
-    n->io.save_state(n->io.ctx, &n->st);
+    if (!n->io.save_state(n->io.ctx, &n->st)) {
+        n->st.guard = before; /* not recorded, so the feed must not happen */
+        return FD_RES_STORAGE;
+    }
 
     n->feed_source = source;
     n->failsafe_fired = false;
@@ -404,9 +408,14 @@ void fd_node_rx(fd_node_t *n, uint32_t now_ms, uint32_t now_epoch, const uint8_t
     case FD_MSG_FEED_NOW: {
         const fd_msg_feed_now_t *m = (const fd_msg_feed_now_t *)data;
         /* A retransmission of the request we just handled gets the same
-         * answer and must not feed twice. */
-        if (!(n->have_feed_seq && hdr->seq == n->last_feed_seq)) {
+         * answer and must not feed twice. Only a recent one counts: the
+         * sequence number is 8 bits and wraps, or restarts when the HMI
+         * reboots, so an old match is a new request. */
+        bool repeat = n->have_feed_seq && hdr->seq == n->last_feed_seq &&
+                      now_ms - n->last_feed_rx_ms < FD_NODE_FEED_DEDUPE_MS;
+        if (!repeat) {
             n->last_feed_seq = hdr->seq;
+            n->last_feed_rx_ms = now_ms;
             n->have_feed_seq = true;
             n->last_feed_code = (uint8_t)try_feed(n, now_ms, now_epoch, FD_SOURCE_MANUAL, m->on_ds, m->pulses);
         }

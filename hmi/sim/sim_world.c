@@ -189,7 +189,11 @@ static void io_relay(void *ctx, bool on)
     s->relay = on;
 }
 static void io_save_cfg(void *ctx, const fd_node_cfg_t *cfg) { ((sim_node_t *)ctx)->flash_cfg = *cfg; }
-static void io_save_state(void *ctx, const fd_node_state_t *st) { ((sim_node_t *)ctx)->flash_state = *st; }
+static bool io_save_state(void *ctx, const fd_node_state_t *st)
+{
+    ((sim_node_t *)ctx)->flash_state = *st;
+    return true;
+}
 static bool io_set_clock(void *ctx, uint32_t e)
 {
     sim_node_t *s = ctx;

@@ -72,7 +72,7 @@ static const char *CFG_FILE = "/cfg2.bin";
 static const char *STATE_FILE = "/state3.bin";
 
 static void ioSaveConfig(void *, const fd_node_cfg_t *cfg) { saveBlob(CFG_FILE, cfg, sizeof(*cfg)); }
-static void ioSaveState(void *, const fd_node_state_t *st) { saveBlob(STATE_FILE, st, sizeof(*st)); }
+static bool ioSaveState(void *, const fd_node_state_t *st) { return saveBlob(STATE_FILE, st, sizeof(*st)); }
 
 // ------------------------------------------------------------------ clock
 
