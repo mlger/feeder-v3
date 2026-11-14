@@ -26,6 +26,7 @@ extern "C" {
 #define FD_NODE_FAILSAFE_MARGIN_MS 500u
 #define FD_NODE_SETTLE_MS         1500u  /* let the hopper stop shaking before weighing */
 #define FD_NODE_WEIGH_TIMEOUT_MS  6000u  /* give up weighing if it never settles */
+#define FD_NODE_FEED_DEDUPE_MS   10000u  /* a FEED_NOW repeating the last seq within this is a retransmission */
 #define FD_NODE_CHANNEL_MAX      13
 #define FD_NODE_EVENT_QUEUE      16
 
@@ -57,7 +58,8 @@ typedef struct {
     void (*set_channel)(void *ctx, uint8_t channel);
     void (*relay)(void *ctx, bool on);
     void (*save_config)(void *ctx, const fd_node_cfg_t *cfg);
-    void (*save_state)(void *ctx, const fd_node_state_t *st);
+    /* Returns false if the write failed; a feed is then refused. */
+    bool (*save_state)(void *ctx, const fd_node_state_t *st);
     /* Set the clock. Returns false if there is no working clock chip. */
     bool (*set_clock)(void *ctx, uint32_t local_epoch);
     /* Arm an independent timer that cuts the relay after `ms`; 0 disarms. */
@@ -119,6 +121,7 @@ typedef struct {
     uint8_t  channel;
     bool     have_feed_seq;
     uint8_t  last_feed_seq, last_feed_code;
+    uint32_t last_feed_rx_ms;
 
     /* firmware update */
     bool               ota_pending;

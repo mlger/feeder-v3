@@ -20,6 +20,7 @@ static struct {
     bool     relay;
     int      relay_rises;
     int      cfg_saves, state_saves;
+    bool     state_save_fails;
     fd_node_cfg_t   saved_cfg;
     fd_node_state_t saved_state;
     bool     has_clock;
@@ -60,7 +61,16 @@ static void hw_relay(void *c, bool on)
     hw.relay = on;
 }
 static void hw_save_cfg(void *c, const fd_node_cfg_t *cfg) { (void)c; hw.saved_cfg = *cfg; hw.cfg_saves++; }
-static void hw_save_state(void *c, const fd_node_state_t *st) { (void)c; hw.saved_state = *st; hw.state_saves++; }
+static bool hw_save_state(void *c, const fd_node_state_t *st)
+{
+    (void)c;
+    if (hw.state_save_fails) {
+        return false;
+    }
+    hw.saved_state = *st;
+    hw.state_saves++;
+    return true;
+}
 static bool hw_set_clock(void *c, uint32_t e) { (void)c; hw.clock_set_to = e; return hw.has_clock; }
 static void hw_failsafe(void *c, uint32_t ms) { (void)c; hw.failsafe_ms = ms; }
 static void hw_ota(void *c, const fd_msg_ota_start_t *m) { (void)c; (void)m; hw.ota_calls++; }
@@ -331,6 +341,38 @@ static void test_retransmitted_feed_request_feeds_once(void)
     TEST_ASSERT_EQUAL(1, hw.relay_rises);
     TEST_ASSERT_EQUAL_UINT16(1, node.st.guard.feeds_today);
     TEST_ASSERT_EQUAL_UINT8(FD_RES_OK, ((const fd_msg_ack_t *)last_sent(FD_MSG_ACK))->code);
+}
+
+static void test_reused_sequence_number_later_is_a_new_feed(void)
+{
+    pair();
+    node.cfg.limits.cooldown_s = 0;
+    node.cfg.limits.daily_max_on_s = 0;
+    feed_now(20, 5, 1);
+    run(2000);
+    TEST_ASSERT_EQUAL(1, hw.relay_rises);
+    run(FD_NODE_FEED_DEDUPE_MS + 1000); /* the HMI rebooted or its counter wrapped */
+    feed_now(20, 5, 1);
+    run(2000);
+    TEST_ASSERT_EQUAL(2, hw.relay_rises);
+    TEST_ASSERT_EQUAL_UINT16(2, node.st.guard.feeds_today);
+}
+
+static void test_feed_is_refused_when_it_cannot_be_recorded(void)
+{
+    pair();
+    clear_sent();
+    hw.state_save_fails = true;
+    feed_now(40, 10, 1);
+    TEST_ASSERT_FALSE(hw.relay);
+    TEST_ASSERT_EQUAL(0, hw.relay_rises);
+    TEST_ASSERT_EQUAL_UINT16(0, node.st.guard.feeds_today);
+    TEST_ASSERT_EQUAL_UINT32(0, node.st.guard.on_ms_today);
+    TEST_ASSERT_EQUAL_UINT8(FD_RES_STORAGE, ((const fd_msg_ack_t *)last_sent(FD_MSG_ACK))->code);
+    hw.state_save_fails = false; /* storage recovers: the same node can feed again */
+    run(100);
+    feed_now(41, 10, 1);
+    TEST_ASSERT_TRUE(hw.relay);
 }
 
 static void test_cooldown_refuses_and_says_so(void)
@@ -627,6 +669,8 @@ int main(void)
     RUN_TEST(test_unpair_forgets_the_hmi);
     RUN_TEST(test_manual_feed_runs_the_relay_and_reports);
     RUN_TEST(test_retransmitted_feed_request_feeds_once);
+    RUN_TEST(test_reused_sequence_number_later_is_a_new_feed);
+    RUN_TEST(test_feed_is_refused_when_it_cannot_be_recorded);
     RUN_TEST(test_cooldown_refuses_and_says_so);
     RUN_TEST(test_request_longer_than_the_hard_limit_is_clamped);
     RUN_TEST(test_failsafe_aborts_and_reports);
