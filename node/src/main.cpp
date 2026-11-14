@@ -14,13 +14,12 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266httpUpdate.h>
 #include <LittleFS.h>
-#include <RTClib.h>
 #include <Ticker.h>
-#include <Wire.h>
 #include <espnow.h>
 
 #include "config.h"
 #include "feeder/node.h"
+#include "rtc.h"
 #include "scale.h"
 
 static fd_node_t node;
@@ -76,22 +75,53 @@ static bool ioSaveState(void *, const fd_node_state_t *st) { return saveBlob(STA
 
 // ------------------------------------------------------------------ clock
 
-static RTC_DS3231 rtc;
 static bool rtcPresent = false;
 static uint32_t cachedEpoch = 0;
 static uint32_t lastClockReadMs = 0;
 
-// Local epoch from the DS3231, read over I2C a couple of times a second.
+// Local epoch from the clock chip (rtc.h), read a couple of times a second.
 // Without an RTC, fall back to uptime so that cooldown still works for
 // manual feeds; scheduled feeds stay disabled.
+//
+// A failed I2C read (a loose wire) can come back as a wildly wrong date. That
+// would reset the daily feed counters and the cooldown, or fire a schedule
+// entry at the wrong time. A reading that disagrees with the time the node
+// has been counting itself by more than CLOCK_JUMP_S is ignored, and the node
+// keeps counting from its last good reading. If readings keep agreeing with
+// each other the change is real (someone set the RTC), so it is accepted.
+static const uint32_t CLOCK_JUMP_S = 300;
+static const uint8_t CLOCK_JUMP_CONFIRMS = 10;
+
 static uint32_t nowEpoch()
 {
     if (!rtcPresent) {
         return millis() / 1000;
     }
-    if (cachedEpoch == 0 || millis() - lastClockReadMs >= CLOCK_READ_MS) {
-        lastClockReadMs = millis();
-        cachedEpoch = rtc.now().unixtime();
+    uint32_t t = millis();
+    if (cachedEpoch == 0) {
+        lastClockReadMs = t;
+        cachedEpoch = rtcRead();
+    } else if (t - lastClockReadMs >= CLOCK_READ_MS) {
+        static uint32_t suspect = 0;
+        static uint8_t suspectCount = 0;
+        uint32_t expected = cachedEpoch + (t - lastClockReadMs) / 1000;
+        uint32_t read = rtcRead();
+        uint32_t diff = read > expected ? read - expected : expected - read;
+        if (diff <= CLOCK_JUMP_S) {
+            cachedEpoch = read;
+            suspectCount = 0;
+        } else {
+            uint32_t apart = read > suspect ? read - suspect : suspect - read;
+            suspectCount = (suspectCount > 0 && apart <= CLOCK_JUMP_S) ? suspectCount + 1 : 1;
+            suspect = read;
+            if (suspectCount >= CLOCK_JUMP_CONFIRMS) {
+                cachedEpoch = read;
+                suspectCount = 0;
+            } else {
+                cachedEpoch = expected; // keep counting on our own
+            }
+        }
+        lastClockReadMs = t;
     }
     return cachedEpoch;
 }
@@ -101,7 +131,7 @@ static bool ioSetClock(void *, uint32_t localEpoch)
     if (!rtcPresent) {
         return false;
     }
-    rtc.adjust(DateTime(localEpoch));
+    rtcWrite(localEpoch);
     cachedEpoch = localEpoch;
     lastClockReadMs = millis();
     return true;
@@ -284,9 +314,8 @@ void setup()
 
     scaleBegin();
 
-    Wire.begin(PIN_SDA, PIN_SCL);
-    rtcPresent = rtc.begin();
-    bool timeValid = rtcPresent && !rtc.lostPower();
+    rtcPresent = rtcBegin();
+    bool timeValid = rtcPresent && rtcTimeValid();
     Serial.printf("[rtc] present=%d valid=%d\n", rtcPresent, timeValid);
 
     WiFi.persistent(false);

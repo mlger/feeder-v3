@@ -18,6 +18,12 @@ static const uint8_t PIN_RELAY = D5;
 static const uint8_t PIN_SDA = D2;
 static const uint8_t PIN_SCL = D1;
 
+// DS1302 instead (build the nodemcuv2_ds1302 environment): it shares the
+// DS3231's two pins and uses D0 for chip enable.
+static const uint8_t PIN_RTC_SCLK = D1; // CLK
+static const uint8_t PIN_RTC_IO = D2;   // DAT
+static const uint8_t PIN_RTC_CE = D0;   // RST
+
 // On-board FLASH button (GPIO0): hold 3 s to enter pairing mode.
 static const uint8_t PIN_BUTTON = D3;
 
@@ -25,5 +31,5 @@ static const uint8_t PIN_BUTTON = D3;
 static const uint8_t PIN_LED = D4;
 
 static const uint32_t PAIR_HOLD_MS = 3000;
-static const uint32_t CLOCK_READ_MS = 500;          // how often the DS3231 is read
+static const uint32_t CLOCK_READ_MS = 500;          // how often the clock chip is read
 static const uint32_t OTA_JOIN_TIMEOUT_MS = 20000;

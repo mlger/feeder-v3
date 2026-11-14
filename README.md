@@ -310,6 +310,7 @@ python3 -m http.server -d _site 8000
 | Relay IN (active high) | D5 / GPIO14 | Add a 10 k pull-down to GND so the relay stays off during reset |
 | DS3231 SDA | D2 / GPIO4 | DS3231 powered from 3V3 |
 | DS3231 SCL | D1 / GPIO5 | |
+| DS1302 CLK / DAT / RST | D1 / D2 / D0 | Only with a DS1302 module instead of the DS3231; build the `nodemcuv2_ds1302` environment (`pio run -d node -e nodemcuv2_ds1302`). Power from 3V3 |
 | HX711 DT (optional scale) | D6 / GPIO12 | Load cell under the hopper |
 | HX711 SCK (optional scale) | D7 / GPIO13 | |
 | Pair button | FLASH / GPIO0 | Hold 3 s to enter pairing mode |
