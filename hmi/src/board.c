@@ -14,7 +14,7 @@ static const char *TAG = "board";
 
 #define I2C_SDA GPIO_NUM_8
 #define I2C_SCL GPIO_NUM_9
-#define I2C_HZ  400000
+#define I2C_HZ  100000 /* 400 kHz made the CH422G reject data bytes on some boards */
 #define I2C_TIMEOUT_MS 100
 
 #define TOUCH_INT GPIO_NUM_4
@@ -52,9 +52,23 @@ static esp_err_t add_dev(uint16_t addr, i2c_master_dev_handle_t *out)
     return i2c_master_bus_add_device(bus, &cfg, out);
 }
 
+/* The CH422G sometimes NACKs a write, mostly just after power-up; a few
+ * retries a few milliseconds apart get through. */
+static esp_err_t exio_transmit(i2c_master_dev_handle_t dev, uint8_t value)
+{
+    esp_err_t err = ESP_FAIL;
+    for (int tries = 0; tries < 10 && err != ESP_OK; tries++) {
+        if (tries > 0) {
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+        err = i2c_master_transmit(dev, &value, 1, I2C_TIMEOUT_MS);
+    }
+    return err;
+}
+
 static esp_err_t exio_write(void)
 {
-    return i2c_master_transmit(dev_exio_out, &exio, 1, I2C_TIMEOUT_MS);
+    return exio_transmit(dev_exio_out, exio);
 }
 
 /* ---------------------------------------------------------------- touch */
@@ -236,9 +250,7 @@ esp_err_t board_init(void)
     ESP_RETURN_ON_ERROR(add_dev(CH422G_ADDR_MODE, &dev_exio_mode), TAG, "CH422G");
     ESP_RETURN_ON_ERROR(add_dev(CH422G_ADDR_OUT, &dev_exio_out), TAG, "CH422G");
 
-    const uint8_t mode = CH422G_MODE_OUTPUT;
-    ESP_RETURN_ON_ERROR(i2c_master_transmit(dev_exio_mode, &mode, 1, I2C_TIMEOUT_MS), TAG,
-                        "CH422G not answering");
+    ESP_RETURN_ON_ERROR(exio_transmit(dev_exio_mode, CH422G_MODE_OUTPUT), TAG, "CH422G not answering");
     ESP_RETURN_ON_ERROR(exio_write(), TAG, "CH422G output");
 
     ESP_RETURN_ON_ERROR(lcd_init(), TAG, "LCD");

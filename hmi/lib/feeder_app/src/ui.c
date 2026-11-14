@@ -724,6 +724,23 @@ static void ui_tick(lv_timer_t *t)
 
 /* ---------------------------------------------------------------- init */
 
+/*
+ * LVGL 9.4.0 bug: lv_xml_register_component_from_data("globals") copies the
+ * scope into its parser state but never initialises the rest of that state
+ * (every other component goes through lv_xml_parser_state_init). It then
+ * reads whatever the stack held. On a PC that is usually harmless; on the
+ * ESP32-S3 it made the parser think it was inside an <api> section and
+ * crash on a NULL name. Zeroing the stack just below this function's frame
+ * first gives it the all-zero state it expects.
+ */
+static void __attribute__((noinline)) scrub_stack(void)
+{
+    volatile uint8_t pad[2048];
+    for (size_t i = 0; i < sizeof(pad); i++) {
+        pad[i] = 0;
+    }
+}
+
 static void register_xml(void)
 {
     static const char *const order[] = {
@@ -735,6 +752,9 @@ static void register_xml(void)
     };
     for (size_t i = 0; i < sizeof(order) / sizeof(order[0]); i++) {
         const char *xml = ui_xml_get(order[i]);
+        if (i == 0) {
+            scrub_stack(); /* "globals" is first: see scrub_stack() */
+        }
         if (!xml || lv_xml_register_component_from_data(order[i], xml) != LV_RESULT_OK) {
             LV_LOG_ERROR("UI component '%s' failed to load", order[i]);
         }
