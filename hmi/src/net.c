@@ -12,6 +12,7 @@
  */
 #include "net.h"
 
+#include <ctype.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -336,7 +337,11 @@ bool plat_node_ota_begin(char *ssid, char *pass, uint8_t ip[4], uint16_t *port)
     ip[3] = esp_ip4_addr4(&info.ip);
     *port = HTTP_PORT;
     atomic_store(&ota_served, false);
+    /* Under the lock, so an upload cannot swap the firmware buffer between
+     * its own check of this flag and the start of a feeder download. */
+    xSemaphoreTake(lock, portMAX_DELAY);
     atomic_store(&ota_ap_open, true);
+    xSemaphoreGive(lock);
     return true;
 }
 
@@ -455,22 +460,32 @@ static esp_err_t h_wifi_scan(httpd_req_t *req)
     return httpd_resp_sendstr(req, out);
 }
 
-/* Decode application/x-www-form-urlencoded text in place. */
-static void url_decode(char *s)
+/* Decode application/x-www-form-urlencoded text in place. Returns false for
+ * a malformed escape; a stray "%zz" must not become a NUL that silently cuts
+ * a password short. */
+static bool url_decode(char *s)
 {
     char *o = s;
     for (; *s; s++) {
         if (*s == '+') {
             *o++ = ' ';
-        } else if (*s == '%' && s[1] && s[2]) {
+        } else if (*s == '%') {
+            if (!isxdigit((unsigned char)s[1]) || !isxdigit((unsigned char)s[2])) {
+                return false;
+            }
             char hex[3] = { s[1], s[2], 0 };
-            *o++ = (char)strtol(hex, NULL, 16);
+            long v = strtol(hex, NULL, 16);
+            if (v == 0) {
+                return false; /* %00 would end the string early */
+            }
+            *o++ = (char)v;
             s += 2;
         } else {
             *o++ = *s;
         }
     }
     *o = '\0';
+    return true;
 }
 
 static esp_err_t h_wifi_connect(httpd_req_t *req)
@@ -496,8 +511,9 @@ static esp_err_t h_wifi_connect(httpd_req_t *req)
         return reply(req, "400 Bad Request", "Enter the network name.");
     }
     httpd_query_key_value(body, "pass", pass, sizeof(pass)); /* may be absent for open networks */
-    url_decode(ssid);
-    url_decode(pass);
+    if (!url_decode(ssid) || !url_decode(pass)) {
+        return reply(req, "400 Bad Request", "The network name or password has an invalid character.");
+    }
     if (ssid[0] == '\0' || strlen(ssid) > 32 || strlen(pass) > 63) {
         return reply(req, "400 Bad Request", "The network name or password is too long.");
     }
@@ -614,6 +630,13 @@ static esp_err_t h_update_node(httpd_req_t *req)
     esp_rom_md5_final(digest, &ctx);
 
     xSemaphoreTake(lock, portMAX_DELAY);
+    if (atomic_load(&ota_ap_open)) {
+        /* A feeder update started during the upload and is serving the
+         * current buffer; replacing it now would free it under the feeder. */
+        xSemaphoreGive(lock);
+        heap_caps_free(buf);
+        return reply(req, "409 Conflict", "A feeder update started while uploading. Try again when it has finished.");
+    }
     heap_caps_free(node_fw);
     node_fw = buf;
     node_fw_len = (uint32_t)got;
